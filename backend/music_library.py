@@ -16,7 +16,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
 import requests
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -409,6 +409,54 @@ def make_router(library: MusicLibrary) -> APIRouter:
 
         library.setup()
         track, duplicate = ingest_external_track(library, payload)
+        return {"imported": track, "duplicate": duplicate}
+
+    @router.post("/suno/upload")
+    async def upload_suno_track(
+        token: str = Form(min_length=12),
+        metadata_json: str = Form(default="{}"),
+        audio: UploadFile = File(),
+        artwork: Optional[UploadFile] = File(default=None),
+    ) -> dict[str, Any]:
+        ingest_token = os.environ.get("SUNO_INGEST_TOKEN") or os.environ.get("MUSIC_RESTORE_TOKEN")
+        if not ingest_token:
+            raise HTTPException(status_code=503, detail="Suno ingest is disabled until SUNO_INGEST_TOKEN is configured")
+        if not secrets_equal(token, ingest_token):
+            raise HTTPException(status_code=403, detail="Invalid Suno ingest token")
+
+        library.setup()
+        try:
+            metadata = json.loads(metadata_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="metadata_json must be valid JSON") from exc
+        if not isinstance(metadata, dict):
+            raise HTTPException(status_code=400, detail="metadata_json must be a JSON object")
+
+        audio_path = save_upload_file(audio, library.inbox_dir / "Suno Auto Uploads", metadata.get("title") or audio.filename)
+        artwork_path = None
+        if artwork and artwork.filename:
+            artwork_path = save_upload_file(
+                artwork,
+                library.artwork_dir,
+                metadata.get("generation_id") or metadata.get("id") or artwork.filename,
+                allowed_extensions={".jpg", ".jpeg", ".png", ".webp"},
+            )
+
+        payload = SunoIngestRequest(
+            token=token,
+            audio_url=f"upload://{audio.filename or audio_path.name}",
+            title=metadata.get("title") or metadata.get("display_title"),
+            generation_id=metadata.get("generation_id") or metadata.get("id"),
+            artwork_url=metadata.get("artwork_url") or metadata.get("image_url"),
+            prompt=metadata.get("prompt") or metadata.get("full_generation_prompt"),
+            negative_prompt=metadata.get("negative_prompt"),
+            lyrics=metadata.get("lyrics"),
+            model_version=metadata.get("model_version") or metadata.get("generation_model_version"),
+            creation_date=metadata.get("creation_date") or metadata.get("created_at"),
+            playlist_name=metadata.get("playlist_name") or "Fresh Suno",
+            raw_metadata=metadata,
+        )
+        track, duplicate = ingest_downloaded_track(library, payload, audio_path, artwork_path)
         return {"imported": track, "duplicate": duplicate}
 
     @router.post("/import")
@@ -886,10 +934,6 @@ def ingest_external_track(library: MusicLibrary, payload: SunoIngestRequest) -> 
     incoming_dir.mkdir(parents=True, exist_ok=True)
 
     audio_path = download_remote_file(payload.audio_url, incoming_dir, payload.title or payload.generation_id or "suno-track")
-    file_hash = sha256_file(audio_path)
-    stat = audio_path.stat()
-    now = utc_now()
-
     artwork_path: Optional[Path] = None
     if payload.artwork_url:
         artwork_path = download_remote_file(
@@ -898,6 +942,18 @@ def ingest_external_track(library: MusicLibrary, payload: SunoIngestRequest) -> 
             payload.generation_id or audio_path.stem,
             allowed_extensions={".jpg", ".jpeg", ".png", ".webp"},
         )
+    return ingest_downloaded_track(library, payload, audio_path, artwork_path)
+
+
+def ingest_downloaded_track(
+    library: MusicLibrary,
+    payload: SunoIngestRequest,
+    audio_path: Path,
+    artwork_path: Optional[Path],
+) -> tuple[dict[str, Any], bool]:
+    file_hash = sha256_file(audio_path)
+    stat = audio_path.stat()
+    now = utc_now()
 
     with library.connect() as conn:
         existing = conn.execute("SELECT * FROM tracks WHERE file_hash = ?", (file_hash,)).fetchone()
@@ -1066,6 +1122,26 @@ def download_remote_file(
                         handle.write(chunk)
     except requests.RequestException as exc:
         raise HTTPException(status_code=400, detail=f"Could not download remote file: {exc}") from exc
+    return destination
+
+
+def save_upload_file(
+    upload: UploadFile,
+    destination_dir: Path,
+    preferred_name: Optional[str],
+    allowed_extensions: Optional[set[str]] = None,
+) -> Path:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(upload.filename or "").suffix.lower()
+    if allowed_extensions and suffix not in allowed_extensions:
+        raise HTTPException(status_code=400, detail=f"Unsupported uploaded file type: {suffix}")
+    if not allowed_extensions and suffix not in SUPPORTED_AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported uploaded audio type: {suffix}")
+
+    filename = safe_filename(preferred_name or upload.filename or "suno-track", suffix)
+    destination = unique_download_path(destination_dir, filename)
+    with destination.open("wb") as handle:
+        shutil.copyfileobj(upload.file, handle)
     return destination
 
 
