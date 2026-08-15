@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import os
+import tempfile
 import shutil
 import sqlite3
 import wave
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import requests
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -48,6 +53,7 @@ class MusicLibrary:
         ):
             directory.mkdir(parents=True, exist_ok=True)
         self._migrate()
+        self.repair_paths()
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -156,6 +162,36 @@ class MusicLibrary:
             ensure_column(conn, "tracks", "cover_art_url", "TEXT")
             ensure_column(conn, "tracks", "cover_art_filepath", "TEXT")
 
+    def repair_paths(self) -> None:
+        if not self.db_path.exists():
+            return
+        with self.connect() as conn:
+            rows = conn.execute("SELECT id, imported_filepath, cover_art_filepath FROM tracks").fetchall()
+            for row in rows:
+                updates: list[str] = []
+                params: list[Any] = []
+
+                imported_path = Path(row["imported_filepath"])
+                if row["imported_filepath"] and not imported_path.exists():
+                    candidate = self.originals_dir / Path(row["imported_filepath"]).name
+                    if candidate.exists():
+                        updates.append("imported_filepath = ?")
+                        params.append(str(candidate))
+
+                cover_art_filepath = row["cover_art_filepath"]
+                if cover_art_filepath:
+                    artwork_path = Path(cover_art_filepath)
+                    if not artwork_path.exists():
+                        candidate = self.artwork_dir / artwork_path.name
+                        if candidate.exists():
+                            updates.append("cover_art_filepath = ?")
+                            params.append(str(candidate))
+
+                if updates:
+                    updates.append("updated_at = ?")
+                    params.extend([utc_now(), row["id"]])
+                    conn.execute(f"UPDATE tracks SET {', '.join(updates)} WHERE id = ?", params)
+
     def next_track_id(self, conn: sqlite3.Connection) -> str:
         rows = conn.execute("SELECT id FROM tracks WHERE id LIKE 'T____'").fetchall()
         highest = 0
@@ -188,6 +224,12 @@ class PlaylistTrackRequest(BaseModel):
     track_id: str = Field(min_length=1)
 
 
+class RestoreRequest(BaseModel):
+    url: str = Field(min_length=8)
+    token: str = Field(min_length=12)
+    expected_sha256: Optional[str] = None
+
+
 def make_router(library: MusicLibrary) -> APIRouter:
     router = APIRouter(prefix="/music", tags=["music-library"])
 
@@ -201,6 +243,66 @@ def make_router(library: MusicLibrary) -> APIRouter:
             "originals_path": str(library.originals_dir),
             "artwork_path": str(library.artwork_dir),
         }
+
+    @router.post("/restore")
+    async def restore_library(payload: RestoreRequest) -> dict[str, Any]:
+        restore_token = os.environ.get("MUSIC_RESTORE_TOKEN")
+        if not restore_token:
+            raise HTTPException(status_code=503, detail="Restore is disabled until MUSIC_RESTORE_TOKEN is configured")
+        if not secrets_equal(payload.token, restore_token):
+            raise HTTPException(status_code=403, detail="Invalid restore token")
+
+        library.root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "music-library-backup.zip"
+            digest = hashlib.sha256()
+            try:
+                with requests.get(payload.url, stream=True, timeout=(15, 120)) as response:
+                    response.raise_for_status()
+                    with archive_path.open("wb") as handle:
+                        for chunk in response.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                digest.update(chunk)
+                                handle.write(chunk)
+            except requests.RequestException as exc:
+                raise HTTPException(status_code=400, detail=f"Could not download backup: {exc}") from exc
+
+            actual_sha256 = digest.hexdigest()
+            if payload.expected_sha256 and payload.expected_sha256.lower() != actual_sha256:
+                raise HTTPException(status_code=400, detail="Backup checksum did not match")
+
+            staging_dir = Path(temp_dir) / "restore"
+            staging_dir.mkdir()
+            try:
+                with zipfile.ZipFile(archive_path) as archive:
+                    safe_extract_zip(archive, staging_dir)
+            except zipfile.BadZipFile as exc:
+                raise HTTPException(status_code=400, detail="Backup is not a valid zip file") from exc
+
+            source_root = staging_dir / "MusicLibrary"
+            if not source_root.exists():
+                source_root = staging_dir
+            if not (source_root / "Data" / "music_library.sqlite3").exists():
+                raise HTTPException(status_code=400, detail="Backup does not contain Data/music_library.sqlite3")
+
+            backup_dir = library.root.with_name(f"{library.root.name}.previous-restore")
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir)
+            if library.root.exists() and any(library.root.iterdir()):
+                library.root.rename(backup_dir)
+            library.root.mkdir(parents=True, exist_ok=True)
+
+            for item in source_root.iterdir():
+                destination = library.root / item.name
+                if item.is_dir():
+                    shutil.copytree(item, destination)
+                else:
+                    shutil.copy2(item, destination)
+
+        library.setup()
+        with library.connect() as conn:
+            stats = library_stats(conn)
+        return {"restored": True, "sha256": actual_sha256, "stats": stats}
 
     @router.post("/import")
     async def import_audio(payload: ImportRequest) -> dict[str, Any]:
@@ -548,6 +650,19 @@ def is_relative_to(path: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
+    destination_root = destination.resolve()
+    for member in archive.infolist():
+        target = (destination / member.filename).resolve()
+        if not is_relative_to(target, destination_root):
+            raise HTTPException(status_code=400, detail="Backup contains unsafe paths")
+    archive.extractall(destination)
+
+
+def secrets_equal(left: str, right: str) -> bool:
+    return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
