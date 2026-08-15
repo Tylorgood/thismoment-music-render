@@ -1,0 +1,17 @@
+.git
+.emergent
+.openai
+MusicLibrary
+node_modules
+frontend/node_modules
+frontend/build
+backend/__pycache__
+**/__pycache__
+*.pyc
+.env
+.env.*
+*.log
+*.err.log
+test_reports
+tests
+signal_awakens_video

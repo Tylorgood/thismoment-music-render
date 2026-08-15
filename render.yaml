@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: thismoment-music
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/
+    autoDeployTrigger: commit
+    envVars:
+      - key: MUSIC_LIBRARY_ROOT
+        value: /var/data/MusicLibrary
+      - key: FRONTEND_BUILD_DIR
+        value: /app/frontend/build
+      - key: CORS_ORIGINS
+        value: "*"
+    disk:
+      name: music-library
+      mountPath: /var/data
+      sizeGB: 10

@@ -1,0 +1,11 @@
+node_modules/
+frontend/node_modules/
+frontend/build/
+.env
+.env.*
+*.log
+*.err.log
+MusicLibrary/
+.deploy-keys/
+__pycache__/
+*.pyc

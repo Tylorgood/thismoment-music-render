@@ -1,0 +1,244 @@
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --tms-black: #0a0a0a;
+  --tms-surface: #121110;
+  --tms-elevated: #1a1a1a;
+  --tms-gold: #d4af37;
+  --tms-gold-soft: rgba(212, 175, 55, 0.14);
+  --tms-white: #ffffff;
+  --tms-muted: #a3a3a3;
+  --tms-line: rgba(255, 255, 255, 0.08);
+  --tms-line-gold: rgba(212, 175, 55, 0.3);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--tms-black);
+  color: var(--tms-white);
+  font-family: "Outfit", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+}
+
+body {
+  overflow-x: hidden;
+  background:
+    radial-gradient(1200px 800px at 20% -10%, rgba(212, 175, 55, 0.08), transparent 60%),
+    radial-gradient(900px 700px at 100% 10%, rgba(212, 175, 55, 0.05), transparent 55%),
+    #0a0a0a;
+}
+
+/* Elegant grain overlay for cinematic feel */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.08;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+.font-serif {
+  font-family: "Cormorant Garamond", "Playfair Display", ui-serif, Georgia, serif;
+  font-feature-settings: "ss01", "liga";
+  letter-spacing: -0.01em;
+}
+
+.font-display {
+  font-family: "Cormorant Garamond", ui-serif, Georgia, serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.tracking-widest-plus {
+  letter-spacing: 0.28em;
+}
+
+.overline {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--tms-gold);
+}
+
+::selection {
+  background: var(--tms-gold);
+  color: #000;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #050505;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e1e1e;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--tms-gold);
+}
+
+/* Button styles */
+.btn-gold {
+  background: var(--tms-gold);
+  color: #000;
+  border: 1px solid var(--tms-gold);
+  transition:
+    background 300ms ease,
+    transform 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 300ms ease;
+}
+.btn-gold:hover {
+  background: #e8c14a;
+  box-shadow: 0 0 40px rgba(212, 175, 55, 0.35);
+  transform: translateY(-1px);
+}
+.btn-ghost {
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  transition: all 300ms ease;
+}
+.btn-ghost:hover {
+  border-color: var(--tms-gold);
+  color: var(--tms-gold);
+}
+
+/* Underline input styles */
+.line-input {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0;
+  padding: 14px 2px;
+  color: #fff;
+  width: 100%;
+  font-size: 1rem;
+  font-family: inherit;
+  transition: border-color 300ms ease;
+}
+.line-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+.line-input:focus {
+  outline: none;
+  border-bottom-color: var(--tms-gold);
+}
+.line-input:-webkit-autofill,
+.line-input:-webkit-autofill:hover,
+.line-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #fff;
+  -webkit-box-shadow: 0 0 0px 1000px transparent inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Spotlight sweep animation for section overlays */
+@keyframes spotlight-sweep {
+  0%,
+  100% {
+    transform: translateX(-30%) rotate(-8deg);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translateX(30%) rotate(8deg);
+    opacity: 0.8;
+  }
+}
+.spotlight-anim {
+  animation: spotlight-sweep 9s ease-in-out infinite;
+}
+
+/* Marquee for “trusted by” band */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.marquee {
+  animation: marquee 40s linear infinite;
+}
+
+/* Fade-in-up utility for scroll reveals */
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity 900ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 900ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Curtain corners on hero */
+.curtain-left,
+.curtain-right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 22vw;
+  max-width: 320px;
+  pointer-events: none;
+  z-index: 2;
+}
+.curtain-left {
+  left: 0;
+  background: linear-gradient(90deg, #0a0a0a 30%, rgba(10, 10, 10, 0) 100%);
+}
+.curtain-right {
+  right: 0;
+  background: linear-gradient(-90deg, #0a0a0a 30%, rgba(10, 10, 10, 0) 100%);
+}
+
+/* Gold hairline divider */
+.hairline {
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--tms-line-gold),
+    transparent
+  );
+}
+
+/* Utility: no rounded corners for hero buttons per design guidelines */
+.rounded-sharp {
+  border-radius: 2px;
+}
+
+/* Hover card lift */
+.lift {
+  transition: transform 700ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 500ms ease, background 500ms ease;
+}
+.lift:hover {
+  transform: translateY(-4px);
+}
+
+@layer base {
+  * {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+}
