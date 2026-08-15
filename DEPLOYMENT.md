@@ -1,25 +1,22 @@
 # Thismoment Music Deployment
 
-This app should be deployed as one web service at first: the FastAPI backend serves the built React app and the music API from the same domain.
+This app deploys as one web service at first: the FastAPI backend serves the built React app and the music API from the same domain.
 
-## Recommended first host
+## Free Render first deploy
 
-Use Render, Railway, or Fly with Docker support and a persistent disk/volume.
+The current `render.yaml` uses Render's free web service plan and stores the music library at `/tmp/MusicLibrary`. This is enough to verify the app online, but storage is ephemeral and the service may spin down when idle.
 
-The service needs:
+## Production upgrade
 
-- Docker build from the repository root.
-- A persistent disk mounted at `/var/data`.
+For reliable phone/car use, upgrade the service to a paid instance and add a persistent disk:
+
+- `plan: starter` or better.
+- Disk mounted at `/var/data`.
 - `MUSIC_LIBRARY_ROOT=/var/data/MusicLibrary`.
-- `FRONTEND_BUILD_DIR=/app/frontend/build`.
 
 ## Why this shape
 
 The `/music` page is only half the product. The audio files, artwork, SQLite library database, playlists, and API are served by FastAPI. A static frontend-only deploy would load the interface but break playback.
-
-## Render path
-
-`render.yaml` defines a starter web service with a 10 GB disk. After creating the service, upload or import songs into the hosted library inbox, then use the app's import flow.
 
 ## Later upgrade
 
