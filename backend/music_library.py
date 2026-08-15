@@ -240,6 +240,21 @@ class RestoreChunkFinishRequest(BaseModel):
     expected_sha256: str = Field(min_length=64, max_length=64)
 
 
+class SunoIngestRequest(BaseModel):
+    token: str = Field(min_length=12)
+    audio_url: str = Field(min_length=8)
+    title: Optional[str] = Field(default=None, max_length=200)
+    generation_id: Optional[str] = Field(default=None, max_length=160)
+    artwork_url: Optional[str] = Field(default=None, max_length=1000)
+    prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    lyrics: Optional[str] = None
+    model_version: Optional[str] = Field(default=None, max_length=120)
+    creation_date: Optional[str] = Field(default=None, max_length=120)
+    playlist_name: str = Field(default="Fresh Suno", min_length=1, max_length=80)
+    raw_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 def make_router(library: MusicLibrary) -> APIRouter:
     router = APIRouter(prefix="/music", tags=["music-library"])
 
@@ -383,6 +398,18 @@ def make_router(library: MusicLibrary) -> APIRouter:
         if not upload_dir.exists():
             raise HTTPException(status_code=404, detail="Restore session was not found")
         return read_restore_status(upload_dir)
+
+    @router.post("/suno/ingest")
+    async def ingest_suno_track(payload: SunoIngestRequest) -> dict[str, Any]:
+        ingest_token = os.environ.get("SUNO_INGEST_TOKEN") or os.environ.get("MUSIC_RESTORE_TOKEN")
+        if not ingest_token:
+            raise HTTPException(status_code=503, detail="Suno ingest is disabled until SUNO_INGEST_TOKEN is configured")
+        if not secrets_equal(payload.token, ingest_token):
+            raise HTTPException(status_code=403, detail="Invalid Suno ingest token")
+
+        library.setup()
+        track, duplicate = ingest_external_track(library, payload)
+        return {"imported": track, "duplicate": duplicate}
 
     @router.post("/import")
     async def import_audio(payload: ImportRequest) -> dict[str, Any]:
@@ -852,6 +879,230 @@ def write_restore_status(upload_dir: Path, status: dict[str, Any]) -> None:
     upload_dir.mkdir(parents=True, exist_ok=True)
     payload = {**status, "updated_at": utc_now()}
     (upload_dir / "restore-status.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def ingest_external_track(library: MusicLibrary, payload: SunoIngestRequest) -> tuple[dict[str, Any], bool]:
+    incoming_dir = library.inbox_dir / "Suno Auto"
+    incoming_dir.mkdir(parents=True, exist_ok=True)
+
+    audio_path = download_remote_file(payload.audio_url, incoming_dir, payload.title or payload.generation_id or "suno-track")
+    file_hash = sha256_file(audio_path)
+    stat = audio_path.stat()
+    now = utc_now()
+
+    artwork_path: Optional[Path] = None
+    if payload.artwork_url:
+        artwork_path = download_remote_file(
+            payload.artwork_url,
+            library.artwork_dir,
+            payload.generation_id or audio_path.stem,
+            allowed_extensions={".jpg", ".jpeg", ".png", ".webp"},
+        )
+
+    with library.connect() as conn:
+        existing = conn.execute("SELECT * FROM tracks WHERE file_hash = ?", (file_hash,)).fetchone()
+        if existing:
+            track_id = existing["id"]
+            apply_suno_metadata(conn, track_id, payload, artwork_path, now)
+            ensure_playlist_track(conn, payload.playlist_name, track_id, now)
+            return track_to_dict(get_track(conn, track_id)), True
+
+        metadata = audio_metadata(audio_path, stat.st_size)
+        track_id = library.next_track_id(conn)
+        imported_path = unique_import_path(library.originals_dir, track_id, audio_path.suffix.lower())
+        shutil.copy2(audio_path, imported_path)
+        title = (payload.title or audio_path.stem.replace("_", " ").replace("-", " ")).strip() or track_id
+
+        conn.execute(
+            """
+            INSERT INTO tracks (
+                id, original_filename, display_title, original_filepath, imported_filepath,
+                source_platform, source_generation_id, creation_date, import_date,
+                generation_model_version, full_generation_prompt, negative_prompt, lyrics,
+                cover_art_url, cover_art_filepath, duration_seconds, file_format,
+                sample_rate, bitrate, channels, file_size, file_hash, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                track_id,
+                audio_path.name,
+                title,
+                str(audio_path),
+                str(imported_path),
+                "Suno",
+                payload.generation_id,
+                payload.creation_date,
+                now,
+                payload.model_version,
+                payload.prompt,
+                payload.negative_prompt,
+                payload.lyrics,
+                payload.artwork_url,
+                str(artwork_path) if artwork_path else None,
+                metadata["duration_seconds"],
+                audio_path.suffix.lower().lstrip("."),
+                metadata["sample_rate"],
+                metadata["bitrate"],
+                metadata["channels"],
+                stat.st_size,
+                file_hash,
+                now,
+                now,
+            ),
+        )
+        save_generation_metadata(conn, track_id, payload, now)
+        ensure_playlist_track(conn, payload.playlist_name, track_id, now)
+        return track_to_dict(get_track(conn, track_id)), False
+
+
+def apply_suno_metadata(
+    conn: sqlite3.Connection,
+    track_id: str,
+    payload: SunoIngestRequest,
+    artwork_path: Optional[Path],
+    now: str,
+) -> None:
+    updates: list[str] = [
+        "source_platform = COALESCE(source_platform, ?)",
+        "source_generation_id = COALESCE(source_generation_id, ?)",
+        "generation_model_version = COALESCE(generation_model_version, ?)",
+        "full_generation_prompt = COALESCE(full_generation_prompt, ?)",
+        "negative_prompt = COALESCE(negative_prompt, ?)",
+        "lyrics = COALESCE(lyrics, ?)",
+        "cover_art_url = COALESCE(cover_art_url, ?)",
+        "cover_art_filepath = COALESCE(cover_art_filepath, ?)",
+        "updated_at = ?",
+    ]
+    conn.execute(
+        f"UPDATE tracks SET {', '.join(updates)} WHERE id = ?",
+        (
+            "Suno",
+            payload.generation_id,
+            payload.model_version,
+            payload.prompt,
+            payload.negative_prompt,
+            payload.lyrics,
+            payload.artwork_url,
+            str(artwork_path) if artwork_path else None,
+            now,
+            track_id,
+        ),
+    )
+    save_generation_metadata(conn, track_id, payload, now)
+
+
+def save_generation_metadata(conn: sqlite3.Connection, track_id: str, payload: SunoIngestRequest, now: str) -> None:
+    raw_metadata = {
+        **payload.raw_metadata,
+        "audio_url": payload.audio_url,
+        "artwork_url": payload.artwork_url,
+        "title": payload.title,
+        "generation_id": payload.generation_id,
+        "prompt": payload.prompt,
+        "negative_prompt": payload.negative_prompt,
+        "lyrics": payload.lyrics,
+        "model_version": payload.model_version,
+        "creation_date": payload.creation_date,
+    }
+    conn.execute(
+        """
+        INSERT INTO generation_metadata (track_id, raw_metadata_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(track_id) DO UPDATE SET
+            raw_metadata_json = excluded.raw_metadata_json,
+            updated_at = excluded.updated_at
+        """,
+        (track_id, json.dumps(raw_metadata, indent=2), now, now),
+    )
+
+
+def ensure_playlist_track(conn: sqlite3.Connection, playlist_name: str, track_id: str, now: str) -> None:
+    name = playlist_name.strip() or "Fresh Suno"
+    row = conn.execute("SELECT * FROM playlists WHERE name = ?", (name,)).fetchone()
+    if not row:
+        cursor = conn.execute(
+            "INSERT INTO playlists (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (name, "Automatically imported Suno tracks", now, now),
+        )
+        playlist_id = cursor.lastrowid
+    else:
+        playlist_id = row["id"]
+
+    exists = conn.execute(
+        "SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?",
+        (playlist_id, track_id),
+    ).fetchone()
+    if exists:
+        return
+
+    position = conn.execute(
+        "SELECT COALESCE(MAX(position), 0) + 1 AS next_position FROM playlist_tracks WHERE playlist_id = ?",
+        (playlist_id,),
+    ).fetchone()["next_position"]
+    conn.execute(
+        "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
+        (playlist_id, track_id, position, now),
+    )
+    conn.execute("UPDATE playlists SET updated_at = ? WHERE id = ?", (now, playlist_id))
+
+
+def download_remote_file(
+    url: str,
+    destination_dir: Path,
+    preferred_name: str,
+    allowed_extensions: Optional[set[str]] = None,
+) -> Path:
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with requests.get(url, stream=True, timeout=(15, 180)) as response:
+            response.raise_for_status()
+            suffix = suffix_for_download(url, response.headers.get("content-type", ""), allowed_extensions)
+            filename = safe_filename(preferred_name, suffix)
+            destination = unique_download_path(destination_dir, filename)
+            with destination.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        handle.write(chunk)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=400, detail=f"Could not download remote file: {exc}") from exc
+    return destination
+
+
+def suffix_for_download(url: str, content_type: str, allowed_extensions: Optional[set[str]]) -> str:
+    suffix = Path(url.split("?", 1)[0]).suffix.lower()
+    if not suffix:
+        suffix = {
+            "audio/mpeg": ".mp3",
+            "audio/mp3": ".mp3",
+            "audio/wav": ".wav",
+            "audio/x-wav": ".wav",
+            "audio/mp4": ".m4a",
+            "audio/flac": ".flac",
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }.get(content_type.split(";", 1)[0].strip().lower(), "")
+    if allowed_extensions and suffix not in allowed_extensions:
+        raise HTTPException(status_code=400, detail=f"Unsupported downloaded file type: {suffix or content_type}")
+    if not allowed_extensions and suffix not in SUPPORTED_AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported downloaded audio type: {suffix or content_type}")
+    return suffix
+
+
+def safe_filename(name: str, suffix: str) -> str:
+    stem = "".join(character if character.isalnum() or character in {" ", "-", "_"} else "-" for character in name)
+    stem = "-".join(stem.strip().split())[:120] or "suno-track"
+    return f"{stem}{suffix}"
+
+
+def unique_download_path(directory: Path, filename: str) -> Path:
+    candidate = directory / filename
+    index = 1
+    while candidate.exists():
+        candidate = directory / f"{Path(filename).stem}-{index}{Path(filename).suffix}"
+        index += 1
+    return candidate
 
 
 def secrets_equal(left: str, right: str) -> bool:
