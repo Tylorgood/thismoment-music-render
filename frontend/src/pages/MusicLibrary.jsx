@@ -200,9 +200,12 @@ function readStoredJson(key, fallback) {
 export default function MusicLibrary() {
   const audioRef = useRef(null);
   const deckBRef = useRef(null);
+  const incomingMixAudioRef = useRef(null);
+  const resumeMixedTrackRef = useRef(null);
   const fadeTimerRef = useRef(null);
   const fadeStartedRef = useRef(false);
   const pendingAutoplayRef = useRef(false);
+  const volumeRef = useRef(0.85);
   const recentTrackIdsRef = useRef([]);
   const lastLoggedPlayRef = useRef({ id: null, at: 0 });
   const [config, setConfig] = useState(null);
@@ -392,6 +395,7 @@ export default function MusicLibrary() {
   }, [playbackQueue, tracks.length]);
 
   useEffect(() => {
+    volumeRef.current = volume;
     if (audioRef.current && !isFading) {
       audioRef.current.volume = volume * (1 - crossfader);
     }
@@ -480,6 +484,39 @@ export default function MusicLibrary() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !activeTrack?.id) return;
+    const mixedResume = resumeMixedTrackRef.current;
+    if (mixedResume?.id === activeTrack.id) {
+      resumeMixedTrackRef.current = null;
+      audio.load();
+      let cancelled = false;
+      const resumeLiveDeck = () => {
+        if (cancelled || !audioRef.current) return;
+        audioRef.current.currentTime = Math.max(0, mixedResume.time || 0);
+        audioRef.current.volume = volumeRef.current;
+        audioRef.current.play().then(() => {
+          incomingMixAudioRef.current?.pause();
+          incomingMixAudioRef.current = null;
+          setIsPlaying(true);
+          setDeckBPlaying(false);
+          setDeckBId(null);
+          setCrossfader(0);
+          setIsFading(false);
+        }).catch(() => setIsPlaying(false));
+      };
+
+      if (audio.readyState >= 2) {
+        resumeLiveDeck();
+      } else {
+        audio.addEventListener("canplay", resumeLiveDeck, { once: true });
+        window.setTimeout(resumeLiveDeck, 350);
+      }
+
+      return () => {
+        cancelled = true;
+        audio.removeEventListener("canplay", resumeLiveDeck);
+      };
+    }
+
     const shouldAutoplay = pendingAutoplayRef.current;
     pendingAutoplayRef.current = false;
     audio.load();
@@ -509,6 +546,7 @@ export default function MusicLibrary() {
       if (fadeTimerRef.current) {
         window.clearInterval(fadeTimerRef.current);
       }
+      incomingMixAudioRef.current?.pause();
     };
   }, []);
 
@@ -605,38 +643,70 @@ export default function MusicLibrary() {
     setIsFading(true);
     setStatus(`Mixing into ${nextTrack.display_title}`);
     const fadeMs = Math.max(1, fadeSeconds) * 1000;
-    const startedAt = Date.now();
+    let startedAt = Date.now();
     const originalVolume = volume;
+    const outgoingAudio = audioRef.current;
+    const incomingAudio = new Audio(`${API_BASE}/api/music/tracks/${nextTrack.id}/audio`);
+    incomingMixAudioRef.current?.pause();
+    incomingMixAudioRef.current = incomingAudio;
+    incomingAudio.preload = "auto";
+    incomingAudio.volume = 0;
+    incomingAudio.playbackRate = playbackRate;
+    incomingAudio.preservesPitch = preservePitch;
+    incomingAudio.mozPreservesPitch = preservePitch;
+    incomingAudio.webkitPreservesPitch = preservePitch;
+    setDeckBId(nextTrack.id);
+    setDeckBPlaying(true);
+    setCrossfader(0);
 
     if (fadeTimerRef.current) {
       window.clearInterval(fadeTimerRef.current);
     }
 
-    fadeTimerRef.current = window.setInterval(() => {
-      if (!audioRef.current) return;
-      const progress = Math.min(1, (Date.now() - startedAt) / fadeMs);
-      audioRef.current.volume = Math.max(0, originalVolume * (1 - progress));
-      if (progress >= 1) {
-        window.clearInterval(fadeTimerRef.current);
-        fadeTimerRef.current = null;
-        audioRef.current.volume = 0;
-        selectTrack(nextTrack.id, true);
-
-        const fadeInStartedAt = Date.now();
+    let overlapStarted = false;
+    const startOverlap = () => {
+      if (overlapStarted) return;
+      overlapStarted = true;
+      incomingAudio.play().then(() => {
+        startedAt = Date.now();
+        recordPlay(nextTrack);
         fadeTimerRef.current = window.setInterval(() => {
-          if (!audioRef.current) return;
-          const fadeInProgress = Math.min(1, (Date.now() - fadeInStartedAt) / fadeMs);
-          audioRef.current.volume = originalVolume * fadeInProgress;
-          if (fadeInProgress >= 1) {
+          const progress = Math.min(1, (Date.now() - startedAt) / fadeMs);
+          if (outgoingAudio) outgoingAudio.volume = Math.max(0, originalVolume * (1 - progress));
+          incomingAudio.volume = Math.min(originalVolume, originalVolume * progress);
+          setCrossfader(progress);
+          if (progress >= 1) {
             window.clearInterval(fadeTimerRef.current);
             fadeTimerRef.current = null;
-            audioRef.current.volume = originalVolume;
-            setIsFading(false);
+            if (outgoingAudio) {
+              outgoingAudio.pause();
+              outgoingAudio.volume = originalVolume;
+            }
+            resumeMixedTrackRef.current = { id: nextTrack.id, time: incomingAudio.currentTime };
+            pendingAutoplayRef.current = false;
+            setActiveId(nextTrack.id);
+            setStatus(`Live: ${nextTrack.display_title}`);
           }
         }, 80);
-      }
-    }, 80);
-  }, [activeIndex, activeTrack, fadeSeconds, isAutoMode, jumpAround, learnedPlays, playbackQueue, selectTrack, smartMix, volume]);
+      }).catch(() => {
+        incomingMixAudioRef.current = null;
+        setDeckBPlaying(false);
+        setDeckBId(null);
+        setCrossfader(0);
+        setIsFading(false);
+        fadeStartedRef.current = false;
+        goRelative(1, true);
+      });
+    };
+
+    if (incomingAudio.readyState >= 2) {
+      startOverlap();
+    } else {
+      incomingAudio.addEventListener("canplay", startOverlap, { once: true });
+      incomingAudio.load();
+      window.setTimeout(startOverlap, 450);
+    }
+  }, [activeIndex, activeTrack, fadeSeconds, goRelative, isAutoMode, jumpAround, learnedPlays, playbackQueue, playbackRate, preservePitch, recordPlay, smartMix, volume]);
 
   const handleTimeUpdate = useCallback(() => {
     const audio = audioRef.current;
