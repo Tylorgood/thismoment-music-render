@@ -459,6 +459,58 @@ def make_router(library: MusicLibrary) -> APIRouter:
         track, duplicate = ingest_downloaded_track(library, payload, audio_path, artwork_path)
         return {"imported": track, "duplicate": duplicate}
 
+    @router.post("/suno/webhook/{provider}")
+    async def receive_suno_webhook(provider: str, request: Request, secret: Optional[str] = Query(default=None)) -> dict[str, Any]:
+        webhook_secret = (
+            os.environ.get("SUNO_WEBHOOK_SECRET")
+            or os.environ.get("SUNO_INGEST_TOKEN")
+            or os.environ.get("MUSIC_RESTORE_TOKEN")
+        )
+        if not webhook_secret:
+            raise HTTPException(status_code=503, detail="Suno webhook is disabled until SUNO_WEBHOOK_SECRET is configured")
+
+        provided_secret = (
+            secret
+            or request.headers.get("x-suno-webhook-secret")
+            or request.headers.get("x-webhook-secret")
+            or request.headers.get("x-api-secret")
+            or ""
+        )
+        if not secrets_equal(provided_secret, webhook_secret):
+            raise HTTPException(status_code=403, detail="Invalid Suno webhook secret")
+
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Webhook payload must be a JSON object")
+
+        library.setup()
+        imported: list[dict[str, Any]] = []
+        duplicates: list[dict[str, Any]] = []
+        for index, item in enumerate(extract_provider_tracks(payload)):
+            audio_url = item.get("audio_url") or item.get("download_url") or item.get("source_audio_url")
+            if not audio_url:
+                continue
+            ingest_payload = SunoIngestRequest(
+                token=webhook_secret,
+                audio_url=audio_url,
+                title=item.get("title") or item.get("name"),
+                generation_id=item.get("id") or item.get("audio_id") or item.get("clip_id") or f"{provider}-{index}",
+                artwork_url=item.get("image_url") or item.get("cover_url") or item.get("artwork_url"),
+                prompt=item.get("prompt") or payload.get("prompt"),
+                negative_prompt=item.get("negative_prompt") or payload.get("negative_prompt"),
+                lyrics=item.get("lyrics") or payload.get("lyrics"),
+                model_version=item.get("model") or payload.get("model"),
+                creation_date=str(item.get("createTime") or item.get("created_at") or payload.get("createTime") or ""),
+                playlist_name="Fresh Suno",
+                raw_metadata={"provider": provider, "webhook": payload, "track": item},
+            )
+            track, duplicate = ingest_external_track(library, ingest_payload)
+            imported.append(track)
+            if duplicate:
+                duplicates.append(track)
+
+        return {"provider": provider, "received": True, "imported": imported, "duplicates": duplicates}
+
     @router.post("/import")
     async def import_audio(payload: ImportRequest) -> dict[str, Any]:
         library.setup()
@@ -927,6 +979,36 @@ def write_restore_status(upload_dir: Path, status: dict[str, Any]) -> None:
     upload_dir.mkdir(parents=True, exist_ok=True)
     payload = {**status, "updated_at": utc_now()}
     (upload_dir / "restore-status.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def extract_provider_tracks(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    tracks: list[dict[str, Any]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            if any(key in value for key in ("audio_url", "source_audio_url", "download_url")):
+                tracks.append(value)
+            result_json = value.get("resultJson")
+            if isinstance(result_json, str):
+                try:
+                    visit(json.loads(result_json))
+                except json.JSONDecodeError:
+                    pass
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(payload)
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for track in tracks:
+        key = str(track.get("audio_url") or track.get("source_audio_url") or track.get("download_url"))
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(track)
+    return deduped
 
 
 def ingest_external_track(library: MusicLibrary, payload: SunoIngestRequest) -> tuple[dict[str, Any], bool]:
