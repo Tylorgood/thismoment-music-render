@@ -12,7 +12,7 @@ import traceback
 import wave
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Optional
 
 import requests
@@ -174,9 +174,10 @@ class MusicLibrary:
                 updates: list[str] = []
                 params: list[Any] = []
 
-                imported_path = Path(row["imported_filepath"])
-                if row["imported_filepath"] and not imported_path.exists():
-                    candidate = self.originals_dir / Path(row["imported_filepath"]).name
+                imported_filepath = row["imported_filepath"]
+                imported_path = Path(imported_filepath)
+                if imported_filepath and not imported_path.exists():
+                    candidate = self.originals_dir / portable_path_name(imported_filepath)
                     if candidate.exists():
                         updates.append("imported_filepath = ?")
                         params.append(str(candidate))
@@ -185,7 +186,7 @@ class MusicLibrary:
                 if cover_art_filepath:
                     artwork_path = Path(cover_art_filepath)
                     if not artwork_path.exists():
-                        candidate = self.artwork_dir / artwork_path.name
+                        candidate = self.artwork_dir / portable_path_name(cover_art_filepath)
                         if candidate.exists():
                             updates.append("cover_art_filepath = ?")
                             params.append(str(candidate))
@@ -729,6 +730,12 @@ def is_relative_to(path: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def portable_path_name(value: str) -> str:
+    windows_name = PureWindowsPath(value).name
+    posix_name = Path(value).name
+    return windows_name if len(windows_name) < len(posix_name) else posix_name
 
 
 def safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
