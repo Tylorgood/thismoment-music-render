@@ -1,22 +1,23 @@
 # Thismoment Music Deployment
 
-This app deploys as one web service at first: the FastAPI backend serves the built React app and the music API from the same domain.
+This app deploys as one web service: the FastAPI backend serves the built React app and the music API from the same domain.
 
-## Free Render first deploy
+## Production Render setup
 
-The current `render.yaml` uses Render's free web service plan and stores the music library at `/tmp/MusicLibrary`. This is enough to verify the app online, but storage is ephemeral and the service may spin down when idle.
+The Blueprint uses a paid Render web service with a persistent disk:
 
-## Production upgrade
-
-For reliable phone/car use, upgrade the service to a paid instance and add a persistent disk:
-
-- `plan: starter` or better.
-- Disk mounted at `/var/data`.
-- `MUSIC_LIBRARY_ROOT=/var/data/MusicLibrary`.
+- `plan: starter`
+- Disk mounted at `/var/data`
+- `MUSIC_LIBRARY_ROOT=/var/data/MusicLibrary`
+- `FRONTEND_BUILD_DIR=/app/frontend/build`
 
 ## Why this shape
 
 The `/music` page is only half the product. The audio files, artwork, SQLite library database, playlists, and API are served by FastAPI. A static frontend-only deploy would load the interface but break playback.
+
+## Restore flow
+
+Use the protected chunked restore endpoints to upload a zipped `MusicLibrary` backup, verify its SHA256 checksum, and restore it into the persistent disk.
 
 ## Later upgrade
 
