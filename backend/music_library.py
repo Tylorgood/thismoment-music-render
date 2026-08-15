@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import tempfile
 import shutil
 import sqlite3
+import threading
+import traceback
 import wave
 import zipfile
 from datetime import datetime, timezone
@@ -348,25 +351,37 @@ def make_router(library: MusicLibrary) -> APIRouter:
         if not upload_dir.exists():
             raise HTTPException(status_code=400, detail="Restore session was not found")
 
-        archive_path = upload_dir / "music-library-backup.zip"
-        digest = hashlib.sha256()
-        with archive_path.open("wb") as output:
-            for index in range(payload.total_parts):
-                part_path = upload_dir / f"{index:06d}.part"
-                if not part_path.exists():
-                    raise HTTPException(status_code=400, detail=f"Missing restore part {index}")
-                with part_path.open("rb") as part:
-                    for chunk in iter(lambda: part.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                        output.write(chunk)
+        status = read_restore_status(upload_dir)
+        if status.get("state") == "running":
+            return {"accepted": True, "session_id": session_id, "status": status}
 
-        actual_sha256 = digest.hexdigest()
-        if payload.expected_sha256.lower() != actual_sha256:
-            raise HTTPException(status_code=400, detail="Backup checksum did not match")
+        write_restore_status(upload_dir, {"state": "queued", "message": "Restore job queued"})
+        thread = threading.Thread(
+            target=run_chunk_restore_job,
+            args=(library, upload_dir, payload.total_parts, payload.expected_sha256.lower()),
+            daemon=True,
+        )
+        thread.start()
+        return {
+            "accepted": True,
+            "session_id": session_id,
+            "status_url": f"/api/music/restore/chunks/{session_id}/status",
+        }
 
-        result = restore_from_zip(library, archive_path, actual_sha256)
-        shutil.rmtree(upload_dir, ignore_errors=True)
-        return result
+    @router.get("/restore/chunks/{session_id}/status")
+    async def get_restore_chunk_status(session_id: str, token: str = Query(min_length=12)) -> dict[str, Any]:
+        restore_token = os.environ.get("MUSIC_RESTORE_TOKEN")
+        if not restore_token:
+            raise HTTPException(status_code=503, detail="Restore is disabled until MUSIC_RESTORE_TOKEN is configured")
+        if not secrets_equal(token, restore_token):
+            raise HTTPException(status_code=403, detail="Invalid restore token")
+        if not safe_restore_session_id(session_id):
+            raise HTTPException(status_code=400, detail="Invalid restore session")
+
+        upload_dir = restore_upload_dir(library, session_id)
+        if not upload_dir.exists():
+            raise HTTPException(status_code=404, detail="Restore session was not found")
+        return read_restore_status(upload_dir)
 
     @router.post("/import")
     async def import_audio(payload: ImportRequest) -> dict[str, Any]:
@@ -726,9 +741,12 @@ def safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
 
 
 def restore_from_zip(library: MusicLibrary, archive_path: Path, actual_sha256: str) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        staging_dir = Path(temp_dir) / "restore"
-        staging_dir.mkdir()
+    staging_parent = archive_path.parent
+    staging_dir = staging_parent / "restore-staging"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True)
+    try:
         try:
             with zipfile.ZipFile(archive_path) as archive:
                 safe_extract_zip(archive, staging_dir)
@@ -751,14 +769,82 @@ def restore_from_zip(library: MusicLibrary, archive_path: Path, actual_sha256: s
         for item in source_root.iterdir():
             destination = library.root / item.name
             if item.is_dir():
-                shutil.copytree(item, destination)
+                shutil.move(str(item), str(destination))
             else:
-                shutil.copy2(item, destination)
+                shutil.move(str(item), str(destination))
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
     library.setup()
     with library.connect() as conn:
         stats = library_stats(conn)
     return {"restored": True, "sha256": actual_sha256, "stats": stats}
+
+
+def run_chunk_restore_job(
+    library: MusicLibrary,
+    upload_dir: Path,
+    total_parts: int,
+    expected_sha256: str,
+) -> None:
+    try:
+        write_restore_status(upload_dir, {"state": "running", "message": "Assembling uploaded chunks"})
+        archive_path = prepare_restore_archive(upload_dir, total_parts, expected_sha256)
+        write_restore_status(upload_dir, {"state": "running", "message": "Extracting backup"})
+        result = restore_from_zip(library, archive_path, expected_sha256)
+        write_restore_status(upload_dir, {"state": "complete", "message": "Restore complete", "result": result})
+
+        for part_path in upload_dir.glob("*.part"):
+            part_path.unlink(missing_ok=True)
+        archive_path.unlink(missing_ok=True)
+    except Exception as exc:
+        write_restore_status(
+            upload_dir,
+            {
+                "state": "failed",
+                "message": str(exc),
+                "traceback": traceback.format_exc(limit=8),
+            },
+        )
+
+
+def prepare_restore_archive(upload_dir: Path, total_parts: int, expected_sha256: str) -> Path:
+    archive_path = upload_dir / "music-library-backup.zip"
+    if archive_path.exists() and sha256_file(archive_path).lower() == expected_sha256:
+        return archive_path
+
+    digest = hashlib.sha256()
+    with archive_path.open("wb") as output:
+        for index in range(total_parts):
+            part_path = upload_dir / f"{index:06d}.part"
+            if not part_path.exists():
+                raise RuntimeError(f"Missing restore part {index}")
+            with part_path.open("rb") as part:
+                for chunk in iter(lambda: part.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    output.write(chunk)
+
+    actual_sha256 = digest.hexdigest()
+    if expected_sha256 != actual_sha256:
+        raise RuntimeError("Backup checksum did not match")
+    return archive_path
+
+
+def read_restore_status(upload_dir: Path) -> dict[str, Any]:
+    status_path = upload_dir / "restore-status.json"
+    if not status_path.exists():
+        part_count = len(list(upload_dir.glob("*.part"))) if upload_dir.exists() else 0
+        return {"state": "uploaded", "message": "Chunks uploaded", "parts": part_count}
+    try:
+        return json.loads(status_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"state": "unknown", "message": "Restore status could not be parsed"}
+
+
+def write_restore_status(upload_dir: Path, status: dict[str, Any]) -> None:
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    payload = {**status, "updated_at": utc_now()}
+    (upload_dir / "restore-status.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def secrets_equal(left: str, right: str) -> bool:
