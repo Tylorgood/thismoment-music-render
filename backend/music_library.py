@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import requests
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -230,6 +230,12 @@ class RestoreRequest(BaseModel):
     expected_sha256: Optional[str] = None
 
 
+class RestoreChunkFinishRequest(BaseModel):
+    token: str = Field(min_length=12)
+    total_parts: int = Field(ge=1, le=10000)
+    expected_sha256: str = Field(min_length=64, max_length=64)
+
+
 def make_router(library: MusicLibrary) -> APIRouter:
     router = APIRouter(prefix="/music", tags=["music-library"])
 
@@ -303,6 +309,64 @@ def make_router(library: MusicLibrary) -> APIRouter:
         with library.connect() as conn:
             stats = library_stats(conn)
         return {"restored": True, "sha256": actual_sha256, "stats": stats}
+
+    @router.put("/restore/chunks/{session_id}/{part_index}")
+    async def upload_restore_chunk(session_id: str, part_index: int, request: Request) -> dict[str, Any]:
+        restore_token = os.environ.get("MUSIC_RESTORE_TOKEN")
+        provided_token = request.headers.get("x-music-restore-token", "")
+        if not restore_token:
+            raise HTTPException(status_code=503, detail="Restore is disabled until MUSIC_RESTORE_TOKEN is configured")
+        if not secrets_equal(provided_token, restore_token):
+            raise HTTPException(status_code=403, detail="Invalid restore token")
+        if not safe_restore_session_id(session_id):
+            raise HTTPException(status_code=400, detail="Invalid restore session")
+        if part_index < 0:
+            raise HTTPException(status_code=400, detail="Invalid part index")
+
+        upload_dir = restore_upload_dir(library, session_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        part_path = upload_dir / f"{part_index:06d}.part"
+        bytes_written = 0
+        with part_path.open("wb") as handle:
+            async for chunk in request.stream():
+                if chunk:
+                    bytes_written += len(chunk)
+                    handle.write(chunk)
+        return {"uploaded": True, "session_id": session_id, "part_index": part_index, "bytes": bytes_written}
+
+    @router.post("/restore/chunks/{session_id}/finish")
+    async def finish_restore_chunks(session_id: str, payload: RestoreChunkFinishRequest) -> dict[str, Any]:
+        restore_token = os.environ.get("MUSIC_RESTORE_TOKEN")
+        if not restore_token:
+            raise HTTPException(status_code=503, detail="Restore is disabled until MUSIC_RESTORE_TOKEN is configured")
+        if not secrets_equal(payload.token, restore_token):
+            raise HTTPException(status_code=403, detail="Invalid restore token")
+        if not safe_restore_session_id(session_id):
+            raise HTTPException(status_code=400, detail="Invalid restore session")
+
+        upload_dir = restore_upload_dir(library, session_id)
+        if not upload_dir.exists():
+            raise HTTPException(status_code=400, detail="Restore session was not found")
+
+        archive_path = upload_dir / "music-library-backup.zip"
+        digest = hashlib.sha256()
+        with archive_path.open("wb") as output:
+            for index in range(payload.total_parts):
+                part_path = upload_dir / f"{index:06d}.part"
+                if not part_path.exists():
+                    raise HTTPException(status_code=400, detail=f"Missing restore part {index}")
+                with part_path.open("rb") as part:
+                    for chunk in iter(lambda: part.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                        output.write(chunk)
+
+        actual_sha256 = digest.hexdigest()
+        if payload.expected_sha256.lower() != actual_sha256:
+            raise HTTPException(status_code=400, detail="Backup checksum did not match")
+
+        result = restore_from_zip(library, archive_path, actual_sha256)
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        return result
 
     @router.post("/import")
     async def import_audio(payload: ImportRequest) -> dict[str, Any]:
@@ -661,8 +725,52 @@ def safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
     archive.extractall(destination)
 
 
+def restore_from_zip(library: MusicLibrary, archive_path: Path, actual_sha256: str) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        staging_dir = Path(temp_dir) / "restore"
+        staging_dir.mkdir()
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                safe_extract_zip(archive, staging_dir)
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="Backup is not a valid zip file") from exc
+
+        source_root = staging_dir / "MusicLibrary"
+        if not source_root.exists():
+            source_root = staging_dir
+        if not (source_root / "Data" / "music_library.sqlite3").exists():
+            raise HTTPException(status_code=400, detail="Backup does not contain Data/music_library.sqlite3")
+
+        backup_dir = library.root.with_name(f"{library.root.name}.previous-restore")
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+        if library.root.exists() and any(library.root.iterdir()):
+            library.root.rename(backup_dir)
+        library.root.mkdir(parents=True, exist_ok=True)
+
+        for item in source_root.iterdir():
+            destination = library.root / item.name
+            if item.is_dir():
+                shutil.copytree(item, destination)
+            else:
+                shutil.copy2(item, destination)
+
+    library.setup()
+    with library.connect() as conn:
+        stats = library_stats(conn)
+    return {"restored": True, "sha256": actual_sha256, "stats": stats}
+
+
 def secrets_equal(left: str, right: str) -> bool:
     return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+
+
+def safe_restore_session_id(session_id: str) -> bool:
+    return bool(session_id) and all(character.isalnum() or character in {"-", "_"} for character in session_id)
+
+
+def restore_upload_dir(library: MusicLibrary, session_id: str) -> Path:
+    return library.root.parent / ".restore_uploads" / session_id
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
