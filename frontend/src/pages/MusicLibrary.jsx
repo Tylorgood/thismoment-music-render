@@ -199,6 +199,7 @@ function readStoredJson(key, fallback) {
 
 export default function MusicLibrary() {
   const audioRef = useRef(null);
+  const deckBRef = useRef(null);
   const fadeTimerRef = useRef(null);
   const fadeStartedRef = useRef(false);
   const pendingAutoplayRef = useRef(false);
@@ -236,6 +237,9 @@ export default function MusicLibrary() {
   const [bookmarks, setBookmarks] = useState({});
   const [waveformBars, setWaveformBars] = useState([]);
   const [volume, setVolume] = useState(0.85);
+  const [deckBId, setDeckBId] = useState(null);
+  const [deckBPlaying, setDeckBPlaying] = useState(false);
+  const [crossfader, setCrossfader] = useState(0);
   const [duplicates, setDuplicates] = useState([]);
   const [playLog, setPlayLog] = useState(() => readStoredJson(PLAY_LOG_STORAGE_KEY, []));
   const [learnedPlays, setLearnedPlays] = useState(() => readStoredJson(PLAY_COUNTS_STORAGE_KEY, {}));
@@ -277,6 +281,18 @@ export default function MusicLibrary() {
     () => playbackQueue.findIndex((track) => track.id === activeTrack?.id),
     [activeTrack, playbackQueue]
   );
+
+  const deckBTrack = useMemo(
+    () => tracks.find((track) => track.id === deckBId) || null,
+    [deckBId, tracks]
+  );
+
+  const suggestedDeckBTrack = useMemo(() => {
+    if (!playbackQueue.length) return null;
+    return smartMix
+      ? smartNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current, jumpAround, learnedPlays)
+      : playbackQueue[(Math.max(activeIndex, 0) + 1) % playbackQueue.length];
+  }, [activeIndex, activeTrack, jumpAround, learnedPlays, playbackQueue, smartMix]);
 
   const recentPlayLog = useMemo(() => playLog.slice(0, 5), [playLog]);
 
@@ -377,9 +393,12 @@ export default function MusicLibrary() {
 
   useEffect(() => {
     if (audioRef.current && !isFading) {
-      audioRef.current.volume = volume;
+      audioRef.current.volume = volume * (1 - crossfader);
     }
-  }, [isFading, volume]);
+    if (deckBRef.current && !isFading) {
+      deckBRef.current.volume = volume * crossfader;
+    }
+  }, [crossfader, isFading, volume]);
 
   useEffect(() => {
     if (!audioRef.current) return;
@@ -388,6 +407,14 @@ export default function MusicLibrary() {
     audioRef.current.mozPreservesPitch = preservePitch;
     audioRef.current.webkitPreservesPitch = preservePitch;
   }, [playbackRate, preservePitch]);
+
+  useEffect(() => {
+    if (!deckBRef.current) return;
+    deckBRef.current.playbackRate = playbackRate;
+    deckBRef.current.preservesPitch = preservePitch;
+    deckBRef.current.mozPreservesPitch = preservePitch;
+    deckBRef.current.webkitPreservesPitch = preservePitch;
+  }, [deckBTrack?.id, playbackRate, preservePitch]);
 
   useEffect(() => {
     setDraftNote(activeTrack?.note || "");
@@ -522,6 +549,50 @@ export default function MusicLibrary() {
     },
     [activeIndex, activeTrack, isAutoMode, isPlaying, jumpAround, learnedPlays, playbackQueue, selectTrack, smartMix]
   );
+
+  const loadSuggestedDeckB = useCallback(() => {
+    if (!suggestedDeckBTrack) {
+      setStatus("No next deck suggestion available");
+      return;
+    }
+    setDeckBId(suggestedDeckBTrack.id);
+    setDeckBPlaying(false);
+    setStatus(`Deck B loaded: ${suggestedDeckBTrack.display_title}`);
+  }, [suggestedDeckBTrack]);
+
+  const toggleDeckBPlayback = useCallback(() => {
+    if (!deckBRef.current || !deckBTrack) return;
+    if (deckBRef.current.paused) {
+      deckBRef.current.play().then(() => {
+        setDeckBPlaying(true);
+        recordPlay(deckBTrack);
+      }).catch(() => setDeckBPlaying(false));
+    } else {
+      deckBRef.current.pause();
+      setDeckBPlaying(false);
+    }
+  }, [deckBTrack, recordPlay]);
+
+  const swapDeckBToA = useCallback(() => {
+    if (!deckBTrack) return;
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    if (deckBRef.current) {
+      deckBRef.current.pause();
+      deckBRef.current.currentTime = 0;
+    }
+    setDeckBPlaying(false);
+    setCrossfader(0);
+    selectTrack(deckBTrack.id, true);
+    setDeckBId(null);
+    setStatus(`Deck B live: ${deckBTrack.display_title}`);
+  }, [deckBTrack, selectTrack]);
+
+  const seekDeckB = (seconds) => {
+    if (!deckBRef.current) return;
+    deckBRef.current.currentTime = Math.max(0, deckBRef.current.currentTime + seconds);
+  };
 
   const fadeToNextTrack = useCallback(() => {
     if (!audioRef.current || !isAutoMode || !playbackQueue.length || fadeStartedRef.current) return;
@@ -960,6 +1031,21 @@ export default function MusicLibrary() {
                 controls
               />
 
+              {deckBTrack && (
+                <audio
+                  ref={deckBRef}
+                  src={`${API_BASE}/api/music/tracks/${deckBTrack.id}/audio`}
+                  onEnded={() => setDeckBPlaying(false)}
+                  onLoadedMetadata={(event) => {
+                    event.currentTarget.volume = volume * crossfader;
+                    event.currentTarget.playbackRate = playbackRate;
+                    event.currentTarget.preservesPitch = preservePitch;
+                    event.currentTarget.mozPreservesPitch = preservePitch;
+                    event.currentTarget.webkitPreservesPitch = preservePitch;
+                  }}
+                />
+              )}
+
               <div className="mode-toggle" role="group" aria-label="Playback mode">
                 <button className={!isAutoMode ? "selected" : ""} onClick={togglePlaybackMode}>
                   Manual edit
@@ -1002,6 +1088,39 @@ export default function MusicLibrary() {
 
               {djToolsOpen && (
                 <div className="dj-controls">
+                  <div className="deck-mixer">
+                    <DeckStrip label="Deck A" track={activeTrack} playing={isPlaying} />
+                    <div className="crossfader-panel">
+                      <button onClick={loadSuggestedDeckB} disabled={!suggestedDeckBTrack}>
+                        Load next
+                      </button>
+                      <label>
+                        Crossfader
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          value={crossfader}
+                          onChange={(event) => setCrossfader(Number(event.target.value))}
+                        />
+                      </label>
+                      <div className="crossfader-values">
+                        <span>A {Math.round((1 - crossfader) * 100)}%</span>
+                        <span>B {Math.round(crossfader * 100)}%</span>
+                      </div>
+                    </div>
+                    <DeckStrip label="Deck B" track={deckBTrack || suggestedDeckBTrack} playing={deckBPlaying} ghost={!deckBTrack} />
+                  </div>
+                  <div className="deck-b-controls">
+                    <button onClick={toggleDeckBPlayback} disabled={!deckBTrack}>
+                      {deckBPlaying ? <Pause size={16} /> : <Play size={16} />}
+                      Deck B
+                    </button>
+                    <button onClick={() => seekDeckB(-10)} disabled={!deckBTrack}>B -10</button>
+                    <button onClick={() => seekDeckB(10)} disabled={!deckBTrack}>B +10</button>
+                    <button onClick={swapDeckBToA} disabled={!deckBTrack}>Make B live</button>
+                  </div>
                   <WaveformDeck
                     track={activeTrack}
                     bars={waveformBars}
@@ -1324,6 +1443,26 @@ function Stat({ label, value }) {
     <div className="stat-row">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function DeckStrip({ label, track, playing, ghost = false }) {
+  return (
+    <div className={`deck-strip ${ghost ? "ghost" : ""}`}>
+      <span className="deck-label">{label}</span>
+      <div className="deck-strip-main">
+        {track && artworkSrc(track) ? (
+          <img src={artworkSrc(track)} alt="" />
+        ) : (
+          <span className="deck-art-placeholder">{track?.id || "--"}</span>
+        )}
+        <div>
+          <strong>{track?.display_title || "Load a track"}</strong>
+          <small>{track ? `${track.id} / ${formatDuration(track.duration_seconds)}` : "Idle deck"}</small>
+        </div>
+      </div>
+      <span className={`deck-state ${playing ? "on" : ""}`}>{playing ? "Live" : ghost ? "Next" : "Ready"}</span>
     </div>
   );
 }

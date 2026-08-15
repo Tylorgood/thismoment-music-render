@@ -18,6 +18,8 @@
 .mode-toggle,
 .mix-controls,
 .dj-controls,
+.deck-mixer,
+.deck-b-controls,
 .rating-grid,
 .metadata-line,
 .stat-row,
@@ -633,6 +635,127 @@
 .dj-controls button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.deck-mixer {
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 0.7fr) minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.deck-strip {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(238, 244, 242, 0.12);
+  border-radius: 6px;
+  background: #111719;
+}
+
+.deck-strip.ghost {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
+.deck-label,
+.deck-state {
+  color: #8fd6c1;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.deck-strip-main {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+}
+
+.deck-strip-main img,
+.deck-art-placeholder {
+  width: 46px;
+  height: 46px;
+  border-radius: 5px;
+}
+
+.deck-strip-main img {
+  object-fit: cover;
+}
+
+.deck-art-placeholder {
+  display: grid;
+  place-items: center;
+  background: #20282a;
+  color: #9aa7a4;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.deck-strip-main strong,
+.deck-strip-main small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deck-strip-main strong {
+  font-size: 0.92rem;
+}
+
+.deck-strip-main small {
+  margin-top: 2px;
+  color: #9aa7a4;
+  font-size: 0.76rem;
+}
+
+.deck-state.on {
+  color: #f2c15f;
+}
+
+.crossfader-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(242, 193, 95, 0.18);
+  border-radius: 6px;
+  background: rgba(242, 193, 95, 0.08);
+}
+
+.crossfader-panel label {
+  display: grid;
+  gap: 5px;
+  color: #f3d196;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.crossfader-panel input {
+  width: 100%;
+}
+
+.crossfader-values {
+  display: flex;
+  justify-content: space-between;
+  color: #b9c4c1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.deck-b-controls {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.deck-b-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .bookmark-row {
@@ -1387,6 +1510,34 @@
     padding: 8px;
   }
 
+  .deck-mixer {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .deck-strip {
+    padding: 8px;
+  }
+
+  .deck-strip-main {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .deck-strip-main img,
+  .deck-art-placeholder {
+    width: 40px;
+    height: 40px;
+  }
+
+  .crossfader-panel {
+    padding: 8px;
+  }
+
+  .deck-b-controls {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
   .waveform-deck {
     height: 72px;
   }
@@ -1470,5 +1621,97 @@
 
   .sheet-playlist-create {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 920px) and (orientation: landscape) {
+  .music-workstation.dj-open {
+    padding: 8px;
+  }
+
+  .music-workstation.dj-open .music-topbar,
+  .music-workstation.dj-open .stats-panel,
+  .music-workstation.dj-open .import-strip,
+  .music-workstation.dj-open .library-panel {
+    display: none;
+  }
+
+  .music-workstation.dj-open .music-grid {
+    display: block;
+  }
+
+  .music-workstation.dj-open .review-panel {
+    position: fixed;
+    inset: 6px;
+    display: grid;
+    grid-template-columns: 250px minmax(0, 1fr);
+    grid-auto-rows: min-content;
+    gap: 8px 10px;
+    max-height: none;
+    padding: 8px;
+    overflow: auto;
+    border-radius: 8px;
+  }
+
+  .music-workstation.dj-open .now-playing {
+    grid-column: 1;
+    grid-template-columns: 48px 1fr 34px;
+    margin: 0;
+  }
+
+  .music-workstation.dj-open .now-artwork {
+    width: 48px;
+    height: 48px;
+  }
+
+  .music-workstation.dj-open .review-panel audio,
+  .music-workstation.dj-open .mode-toggle,
+  .music-workstation.dj-open .transport,
+  .music-workstation.dj-open .dj-toggle {
+    grid-column: 1;
+    margin: 0;
+  }
+
+  .music-workstation.dj-open .transport {
+    grid-template-columns: 38px 46px 38px 1fr;
+  }
+
+  .music-workstation.dj-open .dj-controls {
+    grid-column: 2;
+    grid-row: 1 / span 6;
+    align-self: stretch;
+    margin: 0;
+    overflow: auto;
+  }
+
+  .music-workstation.dj-open .deck-mixer {
+    grid-template-columns: minmax(0, 1fr) 170px minmax(0, 1fr);
+  }
+
+  .music-workstation.dj-open .deck-strip-main {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .music-workstation.dj-open .deck-strip-main img,
+  .music-workstation.dj-open .deck-art-placeholder {
+    width: 38px;
+    height: 38px;
+  }
+
+  .music-workstation.dj-open .deck-b-controls {
+    grid-template-columns: repeat(4, minmax(64px, 1fr));
+  }
+
+  .music-workstation.dj-open .waveform-deck {
+    height: 62px;
+  }
+
+  .music-workstation.dj-open .mix-controls,
+  .music-workstation.dj-open .track-actions,
+  .music-workstation.dj-open .rating-grid,
+  .music-workstation.dj-open .description-panel,
+  .music-workstation.dj-open .note-field,
+  .music-workstation.dj-open .metadata-line {
+    display: none;
   }
 }
