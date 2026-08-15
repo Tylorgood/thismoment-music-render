@@ -201,6 +201,7 @@ export default function MusicLibrary() {
   const audioRef = useRef(null);
   const fadeTimerRef = useRef(null);
   const fadeStartedRef = useRef(false);
+  const pendingAutoplayRef = useRef(false);
   const recentTrackIdsRef = useRef([]);
   const lastLoggedPlayRef = useRef({ id: null, at: 0 });
   const [config, setConfig] = useState(null);
@@ -450,6 +451,33 @@ export default function MusicLibrary() {
   }, [activeTrack?.id]);
 
   useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !activeTrack?.id) return;
+    const shouldAutoplay = pendingAutoplayRef.current;
+    pendingAutoplayRef.current = false;
+    audio.load();
+    if (!shouldAutoplay) return;
+
+    let cancelled = false;
+    const playLoadedTrack = () => {
+      if (cancelled || !audioRef.current) return;
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+    };
+
+    if (audio.readyState >= 2) {
+      playLoadedTrack();
+    } else {
+      audio.addEventListener("canplay", playLoadedTrack, { once: true });
+      window.setTimeout(playLoadedTrack, 350);
+    }
+
+    return () => {
+      cancelled = true;
+      audio.removeEventListener("canplay", playLoadedTrack);
+    };
+  }, [activeTrack?.id]);
+
+  useEffect(() => {
     return () => {
       if (fadeTimerRef.current) {
         window.clearInterval(fadeTimerRef.current);
@@ -458,13 +486,9 @@ export default function MusicLibrary() {
   }, []);
 
   const selectTrack = useCallback((trackId, autoplay = false) => {
+    pendingAutoplayRef.current = autoplay;
     setActiveId(trackId);
     setIsPlaying(autoplay);
-    window.setTimeout(() => {
-      if (autoplay && audioRef.current) {
-        audioRef.current.play().catch(() => setIsPlaying(false));
-      }
-    }, 50);
   }, []);
 
   const togglePlaybackMode = useCallback(() => {
@@ -926,6 +950,7 @@ export default function MusicLibrary() {
                 onEnded={() => {
                   if (isFading) return;
                   if (isAutoMode) {
+                    fadeStartedRef.current = false;
                     goRelative(1, true);
                   } else {
                     setIsPlaying(false);
