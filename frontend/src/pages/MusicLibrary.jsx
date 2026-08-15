@@ -203,6 +203,7 @@ export default function MusicLibrary() {
   const incomingMixAudioRef = useRef(null);
   const resumeMixedTrackRef = useRef(null);
   const fadeTimerRef = useRef(null);
+  const handoffVisualTimerRef = useRef(null);
   const fadeStartedRef = useRef(false);
   const pendingAutoplayRef = useRef(false);
   const volumeRef = useRef(0.85);
@@ -489,13 +490,26 @@ export default function MusicLibrary() {
       resumeMixedTrackRef.current = null;
       audio.load();
       let cancelled = false;
+      if (handoffVisualTimerRef.current) {
+        window.clearInterval(handoffVisualTimerRef.current);
+      }
+      handoffVisualTimerRef.current = window.setInterval(() => {
+        if (!mixedResume.audio || cancelled) return;
+        setCurrentTime(mixedResume.audio.currentTime || 0);
+      }, 200);
       const resumeLiveDeck = () => {
         if (cancelled || !audioRef.current) return;
-        audioRef.current.currentTime = Math.max(0, mixedResume.time || 0);
+        const liveTime = Math.max(0, mixedResume.audio?.currentTime || 0);
+        audioRef.current.currentTime = liveTime;
+        setCurrentTime(liveTime);
         audioRef.current.volume = volumeRef.current;
         audioRef.current.play().then(() => {
-          incomingMixAudioRef.current?.pause();
+          mixedResume.audio?.pause();
           incomingMixAudioRef.current = null;
+          if (handoffVisualTimerRef.current) {
+            window.clearInterval(handoffVisualTimerRef.current);
+            handoffVisualTimerRef.current = null;
+          }
           setIsPlaying(true);
           setDeckBPlaying(false);
           setDeckBId(null);
@@ -513,6 +527,10 @@ export default function MusicLibrary() {
 
       return () => {
         cancelled = true;
+        if (handoffVisualTimerRef.current) {
+          window.clearInterval(handoffVisualTimerRef.current);
+          handoffVisualTimerRef.current = null;
+        }
         audio.removeEventListener("canplay", resumeLiveDeck);
       };
     }
@@ -545,6 +563,9 @@ export default function MusicLibrary() {
     return () => {
       if (fadeTimerRef.current) {
         window.clearInterval(fadeTimerRef.current);
+      }
+      if (handoffVisualTimerRef.current) {
+        window.clearInterval(handoffVisualTimerRef.current);
       }
       incomingMixAudioRef.current?.pause();
     };
@@ -682,14 +703,20 @@ export default function MusicLibrary() {
               outgoingAudio.pause();
               outgoingAudio.volume = originalVolume;
             }
-            resumeMixedTrackRef.current = { id: nextTrack.id, time: incomingAudio.currentTime };
+            resumeMixedTrackRef.current = { id: nextTrack.id, audio: incomingAudio };
             pendingAutoplayRef.current = false;
+            setCurrentTime(incomingAudio.currentTime || 0);
             setActiveId(nextTrack.id);
             setStatus(`Live: ${nextTrack.display_title}`);
           }
         }, 80);
       }).catch(() => {
+        if (fadeTimerRef.current) {
+          window.clearInterval(fadeTimerRef.current);
+          fadeTimerRef.current = null;
+        }
         incomingMixAudioRef.current = null;
+        resumeMixedTrackRef.current = null;
         setDeckBPlaying(false);
         setDeckBId(null);
         setCrossfader(0);
