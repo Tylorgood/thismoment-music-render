@@ -175,6 +175,9 @@ class MusicLibrary:
                     loudness REAL,
                     intro_end REAL,
                     outro_start REAL,
+                    beat_interval REAL,
+                    first_beat REAL,
+                    beat_confidence REAL,
                     drop_times_json TEXT NOT NULL DEFAULT '[]',
                     breakdown_times_json TEXT NOT NULL DEFAULT '[]',
                     status TEXT NOT NULL DEFAULT 'pending',
@@ -186,6 +189,9 @@ class MusicLibrary:
             )
             ensure_column(conn, "tracks", "cover_art_url", "TEXT")
             ensure_column(conn, "tracks", "cover_art_filepath", "TEXT")
+            ensure_column(conn, "track_analysis", "beat_interval", "REAL")
+            ensure_column(conn, "track_analysis", "first_beat", "REAL")
+            ensure_column(conn, "track_analysis", "beat_confidence", "REAL")
 
     def repair_paths(self) -> None:
         if not self.db_path.exists():
@@ -934,6 +940,9 @@ def analysis_select_columns() -> str:
         track_analysis.loudness AS analysis_loudness,
         track_analysis.intro_end AS analysis_intro_end,
         track_analysis.outro_start AS analysis_outro_start,
+        track_analysis.beat_interval AS analysis_beat_interval,
+        track_analysis.first_beat AS analysis_first_beat,
+        track_analysis.beat_confidence AS analysis_beat_confidence,
         track_analysis.drop_times_json AS analysis_drop_times_json,
         track_analysis.breakdown_times_json AS analysis_breakdown_times_json,
         track_analysis.status AS analysis_status,
@@ -964,6 +973,9 @@ def analysis_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
         "loudness": data.get("loudness") or data.get("analysis_loudness"),
         "intro_end": data.get("intro_end") or data.get("analysis_intro_end"),
         "outro_start": data.get("outro_start") or data.get("analysis_outro_start"),
+        "beat_interval": data.get("beat_interval") or data.get("analysis_beat_interval"),
+        "first_beat": data.get("first_beat") or data.get("analysis_first_beat"),
+        "beat_confidence": data.get("beat_confidence") or data.get("analysis_beat_confidence"),
         "drop_times": parse_json_list(data.get("drop_times_json") or data.get("analysis_drop_times_json")),
         "breakdown_times": parse_json_list(data.get("breakdown_times_json") or data.get("analysis_breakdown_times_json")),
         "status": data.get("status") or data.get("analysis_status"),
@@ -1009,10 +1021,11 @@ def save_track_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> N
         """
         INSERT INTO track_analysis (
             track_id, bpm, musical_key, energy, energy_label, danceability, vocal_score,
-            loudness, intro_end, outro_start, drop_times_json, breakdown_times_json,
+            loudness, intro_end, outro_start, beat_interval, first_beat, beat_confidence,
+            drop_times_json, breakdown_times_json,
             status, error, analysis_version, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(track_id) DO UPDATE SET
             bpm = excluded.bpm,
             musical_key = excluded.musical_key,
@@ -1023,6 +1036,9 @@ def save_track_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> N
             loudness = excluded.loudness,
             intro_end = excluded.intro_end,
             outro_start = excluded.outro_start,
+            beat_interval = excluded.beat_interval,
+            first_beat = excluded.first_beat,
+            beat_confidence = excluded.beat_confidence,
             drop_times_json = excluded.drop_times_json,
             breakdown_times_json = excluded.breakdown_times_json,
             status = excluded.status,
@@ -1041,6 +1057,9 @@ def save_track_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> N
             analysis.get("loudness"),
             analysis.get("intro_end"),
             analysis.get("outro_start"),
+            analysis.get("beat_interval"),
+            analysis.get("first_beat"),
+            analysis.get("beat_confidence"),
             json.dumps(analysis.get("drop_times") or []),
             json.dumps(analysis.get("breakdown_times") or []),
             analysis.get("status", "estimated"),
@@ -1106,6 +1125,10 @@ def analyze_track_audio(path: Path) -> dict[str, Any] | None:
         danceability = clamp01((len(beats) / max(1, len(samples) / sample_rate) / 3.2) + energy * 0.35)
         duration = len(samples) / sample_rate
         drop_times = [round(float(librosa.frames_to_time(frame, sr=sample_rate)), 1) for frame in beats[::32][:4]]
+        beat_times = librosa.frames_to_time(beats, sr=sample_rate) if len(beats) else []
+        beat_interval = 60 / max(1, float(np.asarray(tempo).item()))
+        first_beat = float(beat_times[0]) if len(beat_times) else 0
+        beat_confidence = clamp01(min(1, len(beats) / max(8, duration / beat_interval)) * 0.85 + energy * 0.15)
         return {
             "bpm": round(float(np.asarray(tempo).item()), 1),
             "musical_key": key_name,
@@ -1116,6 +1139,9 @@ def analyze_track_audio(path: Path) -> dict[str, Any] | None:
             "loudness": round(float(20 * math.log10(float(np.mean(rms)) + 1e-9)), 1),
             "intro_end": round(min(32, max(8, duration * 0.08)), 1),
             "outro_start": round(max(0, duration - min(40, max(16, duration * 0.12))), 1),
+            "beat_interval": round(beat_interval, 4),
+            "first_beat": round(first_beat, 3),
+            "beat_confidence": round(beat_confidence, 2),
             "drop_times": drop_times,
             "breakdown_times": [],
             "error": "",
@@ -1187,6 +1213,9 @@ def estimate_track_from_metadata(track: sqlite3.Row) -> dict[str, Any]:
         "loudness": None,
         "intro_end": round(min(32, max(8, duration * 0.08)), 1),
         "outro_start": round(max(0, duration - min(40, max(16, duration * 0.12))), 1),
+        "beat_interval": round(60 / max(1, bpm), 4),
+        "first_beat": 0,
+        "beat_confidence": 0.72 if bpm_source == "described" else 0.28,
         "drop_times": [],
         "breakdown_times": [],
         "status": bpm_source,

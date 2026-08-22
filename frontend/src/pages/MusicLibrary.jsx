@@ -116,6 +116,53 @@ function analysisSummary(track) {
   return parts.length ? parts.join(" / ") : analysis.status || "Analyzed";
 }
 
+function beatInterval(track) {
+  const interval = Number(track?.analysis?.beat_interval);
+  if (Number.isFinite(interval) && interval > 0) return interval;
+  const bpm = Number(track?.analysis?.bpm);
+  return Number.isFinite(bpm) && bpm > 0 ? 60 / bpm : null;
+}
+
+function firstBeat(track) {
+  const offset = Number(track?.analysis?.first_beat);
+  return Number.isFinite(offset) && offset >= 0 ? offset : 0;
+}
+
+function beatConfidence(track) {
+  const confidence = Number(track?.analysis?.beat_confidence);
+  if (Number.isFinite(confidence)) return Math.max(0, Math.min(1, confidence));
+  const status = track?.analysis?.status;
+  if (status === "described") return 0.72;
+  if (status === "complete") return 0.78;
+  return 0.28;
+}
+
+function mixTrustLabel(track) {
+  const confidence = beatConfidence(track);
+  if (confidence >= 0.78) return "Beat grid locked";
+  if (confidence >= 0.58) return "Beat grid guided";
+  return "Needs beat review";
+}
+
+function nextBeatDelayMs(track, currentTime, minLead = 0.18) {
+  const interval = beatInterval(track);
+  if (!interval) return 0;
+  const origin = firstBeat(track);
+  const target = Math.max(currentTime + minLead, origin);
+  const beatIndex = Math.ceil((target - origin) / interval);
+  const nextBeat = origin + Math.max(0, beatIndex) * interval;
+  return Math.max(0, Math.min(900, (nextBeat - currentTime) * 1000));
+}
+
+function tempoMatchRate(currentTrack, nextTrack, baseRate = 1) {
+  const currentBpm = Number(currentTrack?.analysis?.bpm);
+  const nextBpm = Number(nextTrack?.analysis?.bpm);
+  if (!Number.isFinite(currentBpm) || !Number.isFinite(nextBpm) || currentBpm <= 0 || nextBpm <= 0) return baseRate;
+  const ratio = currentBpm / nextBpm;
+  if (ratio < 0.92 || ratio > 1.08) return baseRate;
+  return Math.max(0.8, Math.min(1.25, baseRate * ratio));
+}
+
 function energyClass(track) {
   const label = track?.analysis?.energy_label || "Unknown";
   return `energy-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -380,6 +427,7 @@ export default function MusicLibrary() {
   const [playbackMode, setPlaybackMode] = useState("manual");
   const [smartMix, setSmartMix] = useState(true);
   const [shuffleMix, setShuffleMix] = useState(false);
+  const [smartSync, setSmartSync] = useState(true);
   const [keepAwake, setKeepAwake] = useState(true);
   const [wakeLockActive, setWakeLockActive] = useState(false);
   const [jumpAround, setJumpAround] = useState(true);
@@ -906,8 +954,9 @@ export default function MusicLibrary() {
     incomingMixAudioRef.current = incomingAudio;
     incomingAudio.dataset.trackId = nextTrack.id;
     incomingAudio.preload = "auto";
+    const matchedRate = smartSync ? tempoMatchRate(activeTrack, nextTrack, playbackRate) : playbackRate;
     incomingAudio.volume = 1;
-    incomingAudio.playbackRate = playbackRate;
+    incomingAudio.playbackRate = matchedRate;
     incomingAudio.preservesPitch = preservePitch;
     incomingAudio.mozPreservesPitch = preservePitch;
     incomingAudio.webkitPreservesPitch = preservePitch;
@@ -923,6 +972,10 @@ export default function MusicLibrary() {
     const startOverlap = () => {
       if (overlapStarted) return;
       overlapStarted = true;
+      const incomingStart = smartSync ? Math.min(firstBeat(nextTrack), 8) : 0;
+      if (incomingStart > 0 && Number.isFinite(incomingAudio.duration)) {
+        incomingAudio.currentTime = incomingStart;
+      }
       const outgoingGraph = ensureAudioGraph(outgoingAudio, originalVolume);
       const incomingGraph = ensureAudioGraph(incomingAudio, 0);
       const audioContext = incomingGraph?.context || outgoingGraph?.context;
@@ -940,6 +993,9 @@ export default function MusicLibrary() {
           incomingGraph.gain.gain.linearRampToValueAtTime(originalVolume, now + fadeDuration);
         }
         recordPlay(nextTrack);
+        if (smartSync && matchedRate !== playbackRate) {
+          setStatus(`Smart sync: ${nextTrack.display_title} at ${Math.round(matchedRate * 100)}% speed`);
+        }
         fadeTimerRef.current = window.setInterval(() => {
           const progress = Math.min(1, (Date.now() - startedAt) / fadeMs);
           if (!audioContext) {
@@ -985,14 +1041,19 @@ export default function MusicLibrary() {
       });
     };
 
+    const startOnBeat = () => {
+      const delayMs = smartSync ? nextBeatDelayMs(activeTrack, outgoingAudio.currentTime || 0) : 0;
+      window.setTimeout(startOverlap, delayMs);
+    };
+
     if (incomingAudio.readyState >= 2) {
-      startOverlap();
+      startOnBeat();
     } else {
-      incomingAudio.addEventListener("canplay", startOverlap, { once: true });
+      incomingAudio.addEventListener("canplay", startOnBeat, { once: true });
       incomingAudio.load();
-      window.setTimeout(startOverlap, 450);
+      window.setTimeout(startOnBeat, 450);
     }
-  }, [activeIndex, activeTrack, ensureAudioGraph, fadeSeconds, getLiveAudio, goRelative, isAutoMode, jumpAround, learnedPlays, playbackQueue, playbackRate, preservePitch, recordPlay, shuffleMix, smartMix, volume]);
+  }, [activeIndex, activeTrack, ensureAudioGraph, fadeSeconds, getLiveAudio, goRelative, isAutoMode, jumpAround, learnedPlays, playbackQueue, playbackRate, preservePitch, recordPlay, shuffleMix, smartMix, smartSync, volume]);
 
   const skipToNextLive = useCallback(() => {
     if (isPlaying && getLiveAudio() && !fadeStartedRef.current) {
@@ -1778,6 +1839,10 @@ export default function MusicLibrary() {
                     Keep awake {wakeLockActive ? "on" : "ready"}
                   </label>
                   <label className="mix-toggle">
+                    <input type="checkbox" checked={smartSync} onChange={(event) => setSmartSync(event.target.checked)} />
+                    Smart sync
+                  </label>
+                  <label className="mix-toggle">
                     <input
                       type="checkbox"
                       checked={shuffleMix}
@@ -1816,6 +1881,9 @@ export default function MusicLibrary() {
                     <span>{fadeSeconds}s</span>
                   </label>
                   {isFading && <span className="mix-live">Mixing</span>}
+                  <span className={`mix-trust ${beatConfidence(activeTrack) >= 0.58 ? "trusted" : "review"}`}>
+                    {mixTrustLabel(activeTrack)}
+                  </span>
                 </div>
               )}
 
@@ -2190,6 +2258,7 @@ function DeckStrip({ label, track, playing, ghost = false }) {
             {track && sourceSubname(track) && <small className="family-name">Family: {sourceSubname(track)}</small>}
           </strong>
           <small>{track ? `${track.id} / ${formatDuration(track.duration_seconds)}` : "Idle deck"}</small>
+          {track?.analysis && <small className="deck-analysis">{analysisSummary(track)} / {mixTrustLabel(track)}</small>}
         </div>
       </div>
       <span className={`deck-state ${playing ? "on" : ""}`}>{playing ? "Live" : ghost ? "Next" : "Ready"}</span>
@@ -2213,6 +2282,16 @@ function WaveformDeck({ track, bars: decodedBars, currentTime, duration, loopSta
   const progress = duration ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
   const loopLeft = duration && loopStart !== null ? (loopStart / duration) * 100 : null;
   const loopWidth = duration && loopStart !== null && loopEnd !== null ? ((loopEnd - loopStart) / duration) * 100 : null;
+  const beatMarkers = useMemo(() => {
+    const interval = beatInterval(track);
+    if (!duration || !interval) return [];
+    const start = firstBeat(track);
+    const markers = [];
+    for (let time = start; time <= duration && markers.length < 180; time += interval) {
+      if (time >= 0) markers.push({ time, bar: markers.length % 4 === 0 });
+    }
+    return markers;
+  }, [duration, track]);
 
   return (
     <button
@@ -2224,7 +2303,14 @@ function WaveformDeck({ track, bars: decodedBars, currentTime, duration, loopSta
       }}
       title="Tap waveform to jump"
     >
-      <span className="beat-grid" />
+      <span className={`beat-grid ${beatConfidence(track) >= 0.58 ? "trusted" : "review"}`} />
+      {beatMarkers.map((marker, index) => (
+        <span
+          key={`${track?.id || "track"}-beat-${index}`}
+          className={`beat-marker ${marker.bar ? "bar" : ""}`}
+          style={{ left: `${duration ? (marker.time / duration) * 100 : 0}%` }}
+        />
+      ))}
       {loopLeft !== null && loopWidth !== null && loopWidth > 0 && (
         <span className="loop-region" style={{ left: `${loopLeft}%`, width: `${loopWidth}%` }} />
       )}
