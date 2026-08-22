@@ -201,11 +201,12 @@ export default function MusicLibrary() {
   const audioRef = useRef(null);
   const deckBRef = useRef(null);
   const incomingMixAudioRef = useRef(null);
-  const resumeMixedTrackRef = useRef(null);
   const fadeTimerRef = useRef(null);
-  const handoffVisualTimerRef = useRef(null);
   const fadeStartedRef = useRef(false);
   const pendingAutoplayRef = useRef(false);
+  const liveAudioRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const mediaGraphRef = useRef(new WeakMap());
   const volumeRef = useRef(0.85);
   const recentTrackIdsRef = useRef([]);
   const lastLoggedPlayRef = useRef({ id: null, at: 0 });
@@ -398,7 +399,13 @@ export default function MusicLibrary() {
 
   useEffect(() => {
     volumeRef.current = volume;
-    if (audioRef.current && !isFading) {
+    const liveAudio = liveAudioRef.current || audioRef.current;
+    const liveGraph = liveAudio ? mediaGraphRef.current.get(liveAudio) : null;
+    if (liveGraph && audioContextRef.current && !isFading) {
+      liveGraph.gain.gain.setTargetAtTime(volume, audioContextRef.current.currentTime, 0.025);
+      liveAudio.volume = 1;
+    }
+    if (audioRef.current && !isFading && !mediaGraphRef.current.get(audioRef.current)) {
       audioRef.current.volume = volume * (1 - crossfader);
     }
     if (deckBRef.current && !isFading) {
@@ -484,108 +491,51 @@ export default function MusicLibrary() {
     }
   }, [activeTrack?.id]);
 
+  const ensureAudioGraph = useCallback((audio, gainValue = volumeRef.current) => {
+    if (!audio || typeof window === "undefined") return null;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContextClass();
+    }
+    const context = audioContextRef.current;
+    let graph = mediaGraphRef.current.get(audio);
+    if (!graph) {
+      const source = context.createMediaElementSource(audio);
+      const gain = context.createGain();
+      gain.gain.value = gainValue;
+      source.connect(gain).connect(context.destination);
+      graph = { source, gain };
+      mediaGraphRef.current.set(audio, graph);
+    }
+    graph.gain.gain.setValueAtTime(gainValue, context.currentTime);
+    audio.volume = 1;
+    return { context, ...graph };
+  }, []);
+
+  const getLiveAudio = useCallback(() => liveAudioRef.current || audioRef.current, []);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !activeTrack?.id) return;
-    const mixedResume = resumeMixedTrackRef.current;
-    if (mixedResume?.id === activeTrack.id) {
-      resumeMixedTrackRef.current = null;
-      audio.load();
-      let cancelled = false;
-      let resumeStarted = false;
-      if (handoffVisualTimerRef.current) {
-        window.clearInterval(handoffVisualTimerRef.current);
-      }
-      handoffVisualTimerRef.current = window.setInterval(() => {
-        if (!mixedResume.audio || cancelled) return;
-        setCurrentTime(mixedResume.audio.currentTime || 0);
-      }, 200);
-      const resumeLiveDeck = () => {
-        if (cancelled || resumeStarted || !audioRef.current) return;
-        resumeStarted = true;
-        const liveTime = Math.max(0, mixedResume.audio?.currentTime || 0);
-        const mainAudio = audioRef.current;
-        mainAudio.volume = 0;
-        setCurrentTime(liveTime);
-
-        let seekSettled = false;
-        const startMainAfterSeek = () => {
-          if (cancelled || seekSettled || !audioRef.current) return;
-          seekSettled = true;
-          const updatedLiveTime = Math.max(0, mixedResume.audio?.currentTime || liveTime);
-          const mainDeck = audioRef.current;
-          mainDeck.volume = 0;
-          try {
-            mainDeck.currentTime = Math.min(updatedLiveTime, Math.max(0, (mainDeck.duration || updatedLiveTime + 1) - 0.15));
-          } catch {
-            // Some mobile browsers reject a seek while metadata is settling; start silently and let the mix cover it.
-          }
-          mainDeck.play().then(() => {
-            setIsPlaying(true);
-            const handoffStartedAt = Date.now();
-            const handoffMs = 520;
-            const handoffTimer = window.setInterval(() => {
-              if (cancelled || !audioRef.current) {
-                window.clearInterval(handoffTimer);
-                return;
-              }
-              const progress = Math.min(1, (Date.now() - handoffStartedAt) / handoffMs);
-              audioRef.current.volume = volumeRef.current * progress;
-              if (mixedResume.audio) {
-                mixedResume.audio.volume = volumeRef.current * (1 - progress);
-                setCurrentTime(mixedResume.audio.currentTime || audioRef.current.currentTime || 0);
-              }
-              if (progress >= 1) {
-                window.clearInterval(handoffTimer);
-                mixedResume.audio?.pause();
-                incomingMixAudioRef.current = null;
-                if (handoffVisualTimerRef.current) {
-                  window.clearInterval(handoffVisualTimerRef.current);
-                  handoffVisualTimerRef.current = null;
-                }
-                audioRef.current.volume = volumeRef.current;
-                setCurrentTime(audioRef.current.currentTime || 0);
-                setDeckBPlaying(false);
-                setDeckBId(null);
-                setCrossfader(0);
-                setIsFading(false);
-              }
-            }, 40);
-          }).catch(() => setIsPlaying(false));
-        };
-
-        mainAudio.addEventListener("seeked", startMainAfterSeek, { once: true });
-        window.setTimeout(startMainAfterSeek, 300);
-      };
-
-      if (audio.readyState >= 2) {
-        resumeLiveDeck();
-      } else {
-        audio.addEventListener("canplay", resumeLiveDeck, { once: true });
-        audio.addEventListener("loadedmetadata", resumeLiveDeck, { once: true });
-        window.setTimeout(resumeLiveDeck, 350);
-      }
-
-      return () => {
-        cancelled = true;
-        if (handoffVisualTimerRef.current) {
-          window.clearInterval(handoffVisualTimerRef.current);
-          handoffVisualTimerRef.current = null;
-        }
-        audio.removeEventListener("canplay", resumeLiveDeck);
-        audio.removeEventListener("loadedmetadata", resumeLiveDeck);
-      };
-    }
-
     const shouldAutoplay = pendingAutoplayRef.current;
     pendingAutoplayRef.current = false;
+    const liveAudio = liveAudioRef.current;
+    const liveIsSameTrack = liveAudio && incomingMixAudioRef.current === liveAudio && liveAudio.dataset.trackId === activeTrack.id;
+    if (liveIsSameTrack) return;
+    liveAudioRef.current = audio;
     audio.load();
     if (!shouldAutoplay) return;
 
     let cancelled = false;
     const playLoadedTrack = () => {
       if (cancelled || !audioRef.current) return;
-      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+      const graph = ensureAudioGraph(audioRef.current, volumeRef.current);
+      graph?.context.resume?.();
+      audioRef.current.play().then(() => {
+        liveAudioRef.current = audioRef.current;
+        setIsPlaying(true);
+      }).catch(() => setIsPlaying(false));
     };
 
     if (audio.readyState >= 2) {
@@ -599,21 +549,23 @@ export default function MusicLibrary() {
       cancelled = true;
       audio.removeEventListener("canplay", playLoadedTrack);
     };
-  }, [activeTrack?.id]);
+  }, [activeTrack?.id, ensureAudioGraph]);
 
   useEffect(() => {
     return () => {
       if (fadeTimerRef.current) {
         window.clearInterval(fadeTimerRef.current);
       }
-      if (handoffVisualTimerRef.current) {
-        window.clearInterval(handoffVisualTimerRef.current);
-      }
       incomingMixAudioRef.current?.pause();
     };
   }, []);
 
   const selectTrack = useCallback((trackId, autoplay = false) => {
+    if (liveAudioRef.current && liveAudioRef.current !== audioRef.current) {
+      liveAudioRef.current.pause();
+      liveAudioRef.current = null;
+      incomingMixAudioRef.current = null;
+    }
     pendingAutoplayRef.current = autoplay;
     setActiveId(trackId);
     setIsPlaying(autoplay);
@@ -625,13 +577,18 @@ export default function MusicLibrary() {
     if (next === "auto") {
       setSongSheetOpen(false);
       setStatus("Auto radio on");
-      if (audioRef.current) {
-        audioRef.current.play().catch(() => setIsPlaying(false));
+      const liveAudio = getLiveAudio();
+      if (liveAudio) {
+        ensureAudioGraph(liveAudio, volumeRef.current)?.context.resume?.();
+        liveAudio.play().then(() => {
+          liveAudioRef.current = liveAudio;
+          setIsPlaying(true);
+        }).catch(() => setIsPlaying(false));
       }
     } else {
       setStatus("Manual edit mode");
     }
-  }, [playbackMode]);
+  }, [ensureAudioGraph, getLiveAudio, playbackMode]);
 
   const goRelative = useCallback(
     (offset, autoplay = isPlaying) => {
@@ -696,7 +653,8 @@ export default function MusicLibrary() {
   };
 
   const fadeToNextTrack = useCallback(() => {
-    if (!audioRef.current || !isAutoMode || !playbackQueue.length || fadeStartedRef.current) return;
+    const outgoingAudio = getLiveAudio();
+    if (!outgoingAudio || !isAutoMode || !playbackQueue.length || fadeStartedRef.current) return;
     const nextTrack = smartMix
       ? smartNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current, jumpAround, learnedPlays)
       : playbackQueue[(Math.max(activeIndex, 0) + 1) % playbackQueue.length];
@@ -708,12 +666,12 @@ export default function MusicLibrary() {
     const fadeMs = Math.max(1, fadeSeconds) * 1000;
     let startedAt = Date.now();
     const originalVolume = volume;
-    const outgoingAudio = audioRef.current;
     const incomingAudio = new Audio(`${API_BASE}/api/music/tracks/${nextTrack.id}/audio`);
     incomingMixAudioRef.current?.pause();
     incomingMixAudioRef.current = incomingAudio;
+    incomingAudio.dataset.trackId = nextTrack.id;
     incomingAudio.preload = "auto";
-    incomingAudio.volume = 0;
+    incomingAudio.volume = 1;
     incomingAudio.playbackRate = playbackRate;
     incomingAudio.preservesPitch = preservePitch;
     incomingAudio.mozPreservesPitch = preservePitch;
@@ -730,26 +688,51 @@ export default function MusicLibrary() {
     const startOverlap = () => {
       if (overlapStarted) return;
       overlapStarted = true;
+      const outgoingGraph = ensureAudioGraph(outgoingAudio, originalVolume);
+      const incomingGraph = ensureAudioGraph(incomingAudio, 0);
+      const audioContext = incomingGraph?.context || outgoingGraph?.context;
+      audioContext?.resume?.();
       incomingAudio.play().then(() => {
         startedAt = Date.now();
+        if (audioContext && outgoingGraph && incomingGraph) {
+          const now = audioContext.currentTime;
+          const fadeDuration = fadeMs / 1000;
+          outgoingGraph.gain.gain.cancelScheduledValues(now);
+          incomingGraph.gain.gain.cancelScheduledValues(now);
+          outgoingGraph.gain.gain.setValueAtTime(originalVolume, now);
+          incomingGraph.gain.gain.setValueAtTime(0, now);
+          outgoingGraph.gain.gain.linearRampToValueAtTime(0.0001, now + fadeDuration);
+          incomingGraph.gain.gain.linearRampToValueAtTime(originalVolume, now + fadeDuration);
+        }
         recordPlay(nextTrack);
         fadeTimerRef.current = window.setInterval(() => {
           const progress = Math.min(1, (Date.now() - startedAt) / fadeMs);
-          if (outgoingAudio) outgoingAudio.volume = Math.max(0, originalVolume * (1 - progress));
-          incomingAudio.volume = Math.min(originalVolume, originalVolume * progress);
+          if (!audioContext) {
+            outgoingAudio.volume = Math.max(0, originalVolume * (1 - progress));
+            incomingAudio.volume = Math.min(originalVolume, originalVolume * progress);
+          }
           setCrossfader(progress);
+          setCurrentTime(incomingAudio.currentTime || 0);
           if (progress >= 1) {
             window.clearInterval(fadeTimerRef.current);
             fadeTimerRef.current = null;
-            if (outgoingAudio) {
-              outgoingAudio.pause();
-              outgoingAudio.volume = originalVolume;
+            outgoingAudio.pause();
+            if (!audioContext) outgoingAudio.volume = originalVolume;
+            liveAudioRef.current = incomingAudio;
+            if (incomingGraph && audioContext) {
+              incomingGraph.gain.gain.cancelScheduledValues(audioContext.currentTime);
+              incomingGraph.gain.gain.setValueAtTime(originalVolume, audioContext.currentTime);
             }
-            resumeMixedTrackRef.current = { id: nextTrack.id, audio: incomingAudio };
             pendingAutoplayRef.current = false;
             setCurrentTime(incomingAudio.currentTime || 0);
             setActiveId(nextTrack.id);
             setStatus(`Live: ${nextTrack.display_title}`);
+            setIsPlaying(true);
+            setDeckBPlaying(false);
+            setDeckBId(null);
+            setCrossfader(0);
+            setIsFading(false);
+            fadeStartedRef.current = false;
           }
         }, 80);
       }).catch(() => {
@@ -758,7 +741,6 @@ export default function MusicLibrary() {
           fadeTimerRef.current = null;
         }
         incomingMixAudioRef.current = null;
-        resumeMixedTrackRef.current = null;
         setDeckBPlaying(false);
         setDeckBId(null);
         setCrossfader(0);
@@ -775,10 +757,10 @@ export default function MusicLibrary() {
       incomingAudio.load();
       window.setTimeout(startOverlap, 450);
     }
-  }, [activeIndex, activeTrack, fadeSeconds, goRelative, isAutoMode, jumpAround, learnedPlays, playbackQueue, playbackRate, preservePitch, recordPlay, smartMix, volume]);
+  }, [activeIndex, activeTrack, ensureAudioGraph, fadeSeconds, getLiveAudio, goRelative, isAutoMode, jumpAround, learnedPlays, playbackQueue, playbackRate, preservePitch, recordPlay, smartMix, volume]);
 
   const handleTimeUpdate = useCallback(() => {
-    const audio = audioRef.current;
+    const audio = getLiveAudio();
     if (!audio) return;
     setCurrentTime(audio.currentTime || 0);
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -794,7 +776,29 @@ export default function MusicLibrary() {
     if (remaining > 0 && remaining <= Math.max(1, fadeSeconds)) {
       fadeToNextTrack();
     }
-  }, [fadeSeconds, fadeToNextTrack, isAutoMode, loopActive, loopEnd, loopStart, smartMix]);
+  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart, smartMix]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const audio = getLiveAudio();
+      if (!audio || audio.paused) return;
+      setCurrentTime(audio.currentTime || 0);
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setDuration(audio.duration);
+      }
+      if (loopActive && loopStart !== null && loopEnd !== null && loopEnd > loopStart && audio.currentTime >= loopEnd) {
+        audio.currentTime = loopStart;
+        return;
+      }
+      if (!isAutoMode || !smartMix || fadeStartedRef.current) return;
+      if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+      const remaining = audio.duration - audio.currentTime;
+      if (remaining > 0 && remaining <= Math.max(1, fadeSeconds)) {
+        fadeToNextTrack();
+      }
+    }, 180);
+    return () => window.clearInterval(timer);
+  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart, smartMix]);
 
   const updateActiveTrack = useCallback(
     async (patch, advance = false) => {
@@ -942,9 +946,7 @@ export default function MusicLibrary() {
       tracks.find((track) => track.id !== deletedId)?.id ||
       null;
     try {
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
+      getLiveAudio()?.pause();
       await api(`/tracks/${deletedId}`, { method: "DELETE" });
       setTracks((items) => items.filter((track) => track.id !== deletedId));
       setPlaylists((items) =>
@@ -964,25 +966,33 @@ export default function MusicLibrary() {
   };
 
   const togglePlayback = useCallback(() => {
-    if (!audioRef.current || !activeTrack) return;
-    if (audioRef.current.paused) {
-      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+    const liveAudio = getLiveAudio();
+    if (!liveAudio || !activeTrack) return;
+    if (liveAudio.paused) {
+      ensureAudioGraph(liveAudio, volumeRef.current)?.context.resume?.();
+      liveAudio.play().then(() => {
+        liveAudioRef.current = liveAudio;
+        setIsPlaying(true);
+      }).catch(() => setIsPlaying(false));
     } else {
-      audioRef.current.pause();
+      liveAudio.pause();
       setIsPlaying(false);
     }
-  }, [activeTrack]);
+  }, [activeTrack, ensureAudioGraph, getLiveAudio]);
 
-  const seek = (seconds) => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime + seconds);
-  };
+  const seek = useCallback((seconds) => {
+    const liveAudio = getLiveAudio();
+    if (!liveAudio) return;
+    liveAudio.currentTime = Math.max(0, liveAudio.currentTime + seconds);
+    setCurrentTime(liveAudio.currentTime || 0);
+  }, [getLiveAudio]);
 
-  const seekTo = (seconds) => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = Math.min(Math.max(0, seconds), duration || audioRef.current.duration || 0);
-    setCurrentTime(audioRef.current.currentTime);
-  };
+  const seekTo = useCallback((seconds) => {
+    const liveAudio = getLiveAudio();
+    if (!liveAudio) return;
+    liveAudio.currentTime = Math.min(Math.max(0, seconds), duration || liveAudio.duration || 0);
+    setCurrentTime(liveAudio.currentTime || 0);
+  }, [duration, getLiveAudio]);
 
   const markLoopStart = () => {
     setLoopStart(currentTime);
@@ -1032,7 +1042,7 @@ export default function MusicLibrary() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTrack, goRelative, isAutoMode, togglePlayback, updateActiveTrack]);
+  }, [activeTrack, goRelative, isAutoMode, seek, togglePlayback, updateActiveTrack]);
 
   return (
     <main className={`music-workstation ${isAutoMode ? "auto-mode" : "manual-mode"} ${djToolsOpen ? "dj-open" : "dj-closed"}`}>
