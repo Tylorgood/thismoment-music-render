@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import gc
 import json
 import math
 import os
@@ -788,6 +789,7 @@ def make_router(library: MusicLibrary) -> APIRouter:
             analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status IN ('error', 'estimated')"
         else:
             analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status = 'error'"
+        effective_limit = min(payload.limit, 5) if payload.mode == "audio" else payload.limit
         with library.connect() as conn:
             rows = conn.execute(
                 f"""
@@ -798,7 +800,7 @@ def make_router(library: MusicLibrary) -> APIRouter:
                 ORDER BY tracks.id ASC
                 LIMIT ?
                 """,
-                (payload.limit,),
+                (effective_limit,),
             ).fetchall()
             skipped = conn.execute("SELECT COUNT(*) AS count FROM tracks").fetchone()["count"] - len(rows)
             for track in rows:
@@ -1090,7 +1092,7 @@ def analyze_track_audio(path: Path) -> dict[str, Any] | None:
         return None
 
     try:
-        samples, sample_rate = librosa.load(str(path), sr=22050, mono=True, duration=120)
+        samples, sample_rate = librosa.load(str(path), sr=22050, mono=True, duration=45)
         if samples.size < sample_rate:
             return None
         tempo, beats = librosa.beat.beat_track(y=samples, sr=sample_rate)
@@ -1120,6 +1122,8 @@ def analyze_track_audio(path: Path) -> dict[str, Any] | None:
         }
     except Exception as exc:
         return {"status": "estimated", "error": f"Audio analysis unavailable: {exc}"}
+    finally:
+        gc.collect()
 
 
 def estimate_track_from_metadata(track: sqlite3.Row) -> dict[str, Any]:
