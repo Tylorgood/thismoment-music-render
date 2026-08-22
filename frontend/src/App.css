@@ -2658,6 +2658,11 @@
   font-size: 0.7rem;
 }
 
+.track-row .family-name,
+.track-row .source-filename {
+  display: none;
+}
+
 .source-filename {
   opacity: 0.42;
 }

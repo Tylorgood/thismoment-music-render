@@ -1349,7 +1349,7 @@ export default function MusicLibrary() {
           <div className="filters">
             <label className="search-field">
               <Search size={15} />
-              <input placeholder="Search title, file, ID" value={query} onChange={(event) => setQuery(event.target.value)} />
+              <input placeholder="Search title, family, ID" value={query} onChange={(event) => setQuery(event.target.value)} />
             </label>
             <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value)}>
               <option value="">All ratings</option>
@@ -1375,25 +1375,21 @@ export default function MusicLibrary() {
           </div>
 
           <div className="track-list">
-            {playbackQueue.map((track) => {
-              const familyName = sourceSubname(track);
-              return (
-                <button
-                  className={`track-row ${track.id === activeTrack?.id ? "active" : ""}`}
-                  key={track.id}
-                  onClick={() => selectTrack(track.id, true)}
-                >
-                  <span className="track-thumb">
-                    {artworkSrc(track) ? <img src={artworkSrc(track)} alt="" /> : <span>{track.id.slice(1)}</span>}
-                  </span>
-                  <span className="track-main">
-                    <strong><span className="track-id inline">{track.id}</span>{track.display_title}</strong>
-                    {familyName && <small className="family-name">Family: {familyName}</small>}
-                  </span>
-                  <span className={`rating-pill rating-${track.rating || "none"}`}>{track.rating || "-"}</span>
-                </button>
-              );
-            })}
+            {playbackQueue.map((track) => (
+              <button
+                className={`track-row ${track.id === activeTrack?.id ? "active" : ""}`}
+                key={track.id}
+                onClick={() => selectTrack(track.id, true)}
+              >
+                <span className="track-thumb">
+                  {artworkSrc(track) ? <img src={artworkSrc(track)} alt="" /> : <span>{track.id.slice(1)}</span>}
+                </span>
+                <span className="track-main">
+                  <strong><span className="track-id inline">{track.id}</span>{track.display_title}</strong>
+                </span>
+                <span className={`rating-pill rating-${track.rating || "none"}`}>{track.rating || "-"}</span>
+              </button>
+            ))}
             {!tracks.length && <div className="empty-library">No tracks yet. Import an inbox to begin.</div>}
             {Boolean(tracks.length) && !playbackQueue.length && (
               <div className="empty-library">No tracks match this playlist and filter combo.</div>
