@@ -116,6 +116,11 @@ function analysisSummary(track) {
   return parts.length ? parts.join(" / ") : analysis.status || "Analyzed";
 }
 
+function energyClass(track) {
+  const label = track?.analysis?.energy_label || "Unknown";
+  return `energy-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
 function trackText(track) {
   return [
     track?.display_title,
@@ -130,6 +135,69 @@ function trackText(track) {
     .toLowerCase();
 }
 
+function familyKey(track) {
+  return (sourceSubname(track) || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function titleRoot(track) {
+  return (track?.display_title || "")
+    .toLowerCase()
+    .replace(/\b(skyline|low orbit|blue hour|night bloom|deep room|signal run|velvet air|redline|glass wave|street glow|quiet fire|pulse check|open road|silver room|tape glow|last light|chrome rain|future memory|basement light|soft thunder|hidden floor|moonlit cut|golden circuit|static bloom|clean break|radio bloom|wide awake|gravity mix|livewire|high voltage|ocean drive|shadow lift|second sunrise|club prayer|dream engine|inner lane|northern light|heavy weather|break point|late signal|warm machine|ghost note|bass lantern|violet air|pressure bloom|lost signal|city heat|analog sky|midnight lift)\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function lyricsKey(track) {
+  const lyrics = (track?.lyrics || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return lyrics.length > 40 ? lyrics.slice(0, 240) : "";
+}
+
+function hasBackToBackConflict(current, candidate) {
+  if (!current || !candidate) return false;
+  if (current.id === candidate.id) return true;
+  const currentFamily = familyKey(current);
+  const candidateFamily = familyKey(candidate);
+  if (currentFamily && candidateFamily && currentFamily === candidateFamily) return true;
+  const currentTitle = titleRoot(current);
+  const candidateTitle = titleRoot(candidate);
+  if (currentTitle && candidateTitle && currentTitle === candidateTitle) return true;
+  const currentLyrics = lyricsKey(current);
+  const candidateLyrics = lyricsKey(candidate);
+  return Boolean(currentLyrics && candidateLyrics && currentLyrics === candidateLyrics);
+}
+
+function isUpbeatOpener(track) {
+  const text = trackText(track);
+  const bpm = track?.analysis?.bpm || 0;
+  const energy = track?.analysis?.energy || 0;
+  return (
+    track?.rating !== "D" &&
+    track?.rating !== "S" &&
+    (bpm >= 108 || energy >= 0.58 || /upbeat|quick|tempo|club|drive|dnb|dance|groove|bass|sleigh|high energy/.test(text))
+  );
+}
+
+function pickOpeningTrack(queue, recentIds = [], playCounts = {}) {
+  const recent = new Set(recentIds);
+  const pool = queue.filter((track) => !recent.has(track.id) && isUpbeatOpener(track));
+  const fallback = queue.filter((track) => !recent.has(track.id) && track.rating !== "S") || queue;
+  const candidates = pool.length ? pool : fallback.length ? fallback : queue;
+  const ranked = candidates
+    .map((track) => ({
+      track,
+      score:
+        (track.analysis?.energy || 0.5) * 6 +
+        Math.min(3, (track.analysis?.bpm || 100) / 45) +
+        (track.favorite ? 1 : 0) -
+        Math.min(4, (playCounts[track.id] || 0) * 0.8),
+    }))
+    .sort((a, b) => b.score - a.score);
+  return weightedPick(ranked.slice(0, Math.min(10, ranked.length)));
+}
+
 function trackTokens(track) {
   return new Set(
     trackText(track)
@@ -142,6 +210,7 @@ function trackTokens(track) {
 
 function similarityScore(current, candidate) {
   if (!current || !candidate) return 0;
+  if (hasBackToBackConflict(current, candidate)) return -100;
   const currentTokens = trackTokens(current);
   const candidateTokens = trackTokens(candidate);
   let shared = 0;
@@ -151,8 +220,13 @@ function similarityScore(current, candidate) {
   const ratingGap = Math.abs((RATING_ENERGY[current.rating] || 3) - (RATING_ENERGY[candidate.rating] || 3));
   const ratingScore = Math.max(0, 3 - ratingGap) * 0.7;
   const favoriteScore = candidate.favorite ? 0.8 : 0;
-  const exceptionalPenalty = current.rating === "S" && candidate.rating === "S" ? 4 : 0;
-  return shared * 1.8 + ratingScore + favoriteScore - exceptionalPenalty;
+  const bpmGap = Math.abs((current.analysis?.bpm || 0) - (candidate.analysis?.bpm || 0));
+  const bpmScore = current.analysis?.bpm && candidate.analysis?.bpm ? Math.max(0, 6 - bpmGap / 8) : 0;
+  const energyGap = Math.abs((current.analysis?.energy || 0.5) - (candidate.analysis?.energy || 0.5));
+  const energyScore = Math.max(0, 2 - energyGap * 4);
+  const exceptionalPenalty = candidate.rating === "S" && (current.rating === "S" || (current.analysis?.energy || 0) < 0.58) ? 9 : 0;
+  const exceptionalPayoff = candidate.rating === "S" && current.rating !== "S" && (current.analysis?.energy || 0) >= 0.58 ? 2.5 : 0;
+  return shared * 1.2 + ratingScore + favoriteScore + bpmScore + energyScore + exceptionalPayoff - exceptionalPenalty;
 }
 
 function weightedPick(scoredTracks) {
@@ -168,11 +242,13 @@ function weightedPick(scoredTracks) {
 
 function smartNextTrack(current, queue, recentIds = [], jumpAround = true, playCounts = {}) {
   if (!queue.length) return null;
+  if (!current) return pickOpeningTrack(queue, recentIds, playCounts);
   const recent = new Set(recentIds);
-  const candidates = queue.filter((track) => track.id !== current?.id && !recent.has(track.id));
-  const fallbackCandidates = queue.filter((track) => track.id !== current?.id);
+  const candidates = queue.filter((track) => !hasBackToBackConflict(current, track) && !recent.has(track.id));
+  const fallbackCandidates = queue.filter((track) => !hasBackToBackConflict(current, track));
+  const lastResort = queue.filter((track) => track.id !== current?.id);
   const pool = candidates.length ? candidates : fallbackCandidates;
-  if (!pool.length) return queue[0];
+  if (!pool.length) return lastResort[0] || queue[0];
   const ranked = pool
     .map((track) => {
       const learnedPenalty = Math.min(3, (playCounts[track.id] || 0) * 0.35);
@@ -187,11 +263,13 @@ function smartNextTrack(current, queue, recentIds = [], jumpAround = true, playC
 
 function randomNextTrack(current, queue, recentIds = []) {
   if (!queue.length) return null;
+  if (!current) return pickOpeningTrack(queue, recentIds);
   const recent = new Set(recentIds);
-  const fresh = queue.filter((track) => track.id !== current?.id && !recent.has(track.id));
-  const fallback = queue.filter((track) => track.id !== current?.id);
+  const fresh = queue.filter((track) => !hasBackToBackConflict(current, track) && !recent.has(track.id));
+  const fallback = queue.filter((track) => !hasBackToBackConflict(current, track));
+  const lastResort = queue.filter((track) => track.id !== current?.id);
   const pool = fresh.length ? fresh : fallback;
-  if (!pool.length) return queue[0];
+  if (!pool.length) return lastResort[0] || queue[0];
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -708,6 +786,14 @@ export default function MusicLibrary() {
     if (next === "auto") {
       setSongSheetOpen(false);
       setStatus("Auto radio on");
+      if (!isPlaying) {
+        const opener = pickOpeningTrack(playbackQueue, recentTrackIdsRef.current, learnedPlays);
+        if (opener && opener.id !== activeTrack?.id) {
+          setStatus(`Opening with ${opener.display_title}`);
+          selectTrack(opener.id, true);
+          return;
+        }
+      }
       const liveAudio = getLiveAudio();
       if (liveAudio) {
         ensureAudioGraph(liveAudio, volumeRef.current)?.context.resume?.();
@@ -719,7 +805,7 @@ export default function MusicLibrary() {
     } else {
       setStatus("Manual edit mode");
     }
-  }, [ensureAudioGraph, getLiveAudio, playbackMode]);
+  }, [activeTrack?.id, ensureAudioGraph, getLiveAudio, isPlaying, learnedPlays, playbackMode, playbackQueue, selectTrack]);
 
   const goRelative = useCallback(
     (offset, autoplay = isPlaying) => {
@@ -1420,7 +1506,7 @@ export default function MusicLibrary() {
                 </span>
                 <span className="track-main">
                   <strong><span className="track-id inline">{track.id}</span>{track.display_title}</strong>
-                  {track.analysis && <small className="analysis-line">{analysisSummary(track)}</small>}
+                  {track.analysis && <small className={`analysis-line ${energyClass(track)}`}>{analysisSummary(track)}</small>}
                 </span>
                 <span className={`rating-pill rating-${track.rating || "none"}`}>{track.rating || "-"}</span>
               </button>
@@ -1462,7 +1548,7 @@ export default function MusicLibrary() {
                     </h2>
                   </button>
                   <div className="analysis-pills">
-                    <span>{analysisSummary(activeTrack)}</span>
+                    <span className={energyClass(activeTrack)}>{analysisSummary(activeTrack)}</span>
                     {activeTrack.analysis?.status && <span>{activeTrack.analysis.status}</span>}
                   </div>
                   <div className="now-state-row">

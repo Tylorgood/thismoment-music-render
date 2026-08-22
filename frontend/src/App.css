@@ -2673,6 +2673,26 @@
   opacity: 0.72;
 }
 
+.analysis-line.energy-chill,
+.analysis-pills .energy-chill {
+  color: #93c5fd !important;
+}
+
+.analysis-line.energy-groove,
+.analysis-pills .energy-groove {
+  color: #86efac !important;
+}
+
+.analysis-line.energy-drive,
+.analysis-pills .energy-drive {
+  color: #facc15 !important;
+}
+
+.analysis-line.energy-peak,
+.analysis-pills .energy-peak {
+  color: #fb7185 !important;
+}
+
 .analysis-pills {
   display: flex;
   flex-wrap: wrap;
@@ -2689,6 +2709,26 @@
   font-size: 0.76rem;
   font-weight: 700;
   padding: 5px 9px;
+}
+
+.analysis-pills .energy-chill {
+  border-color: rgba(147, 197, 253, 0.3);
+  background: rgba(147, 197, 253, 0.09);
+}
+
+.analysis-pills .energy-groove {
+  border-color: rgba(134, 239, 172, 0.3);
+  background: rgba(134, 239, 172, 0.09);
+}
+
+.analysis-pills .energy-drive {
+  border-color: rgba(250, 204, 21, 0.3);
+  background: rgba(250, 204, 21, 0.09);
+}
+
+.analysis-pills .energy-peak {
+  border-color: rgba(251, 113, 133, 0.34);
+  background: rgba(251, 113, 133, 0.1);
 }
 
 .analysis-card {
