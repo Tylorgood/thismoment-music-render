@@ -782,17 +782,23 @@ def make_router(library: MusicLibrary) -> APIRouter:
         library.setup()
         analyzed: list[dict[str, Any]] = []
         skipped = 0
+        if payload.force:
+            analysis_where = "1 = 1"
+        elif payload.mode == "audio":
+            analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status IN ('error', 'estimated')"
+        else:
+            analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status = 'error'"
         with library.connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT tracks.*
                 FROM tracks
                 LEFT JOIN track_analysis ON track_analysis.track_id = tracks.id
-                WHERE (? = 1 OR track_analysis.track_id IS NULL OR track_analysis.status = 'error')
+                WHERE {analysis_where}
                 ORDER BY tracks.id ASC
                 LIMIT ?
                 """,
-                (1 if payload.force else 0, payload.limit),
+                (payload.limit,),
             ).fetchall()
             skipped = conn.execute("SELECT COUNT(*) AS count FROM tracks").fetchone()["count"] - len(rows)
             for track in rows:
