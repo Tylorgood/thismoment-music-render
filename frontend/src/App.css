@@ -2667,6 +2667,47 @@
   opacity: 0.42;
 }
 
+.analysis-line {
+  color: var(--text-muted) !important;
+  font-size: 0.72rem;
+  opacity: 0.72;
+}
+
+.analysis-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+
+.analysis-pills span,
+.analysis-card span {
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-mid);
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.analysis-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.analysis-card strong {
+  color: var(--text-strong);
+}
+
+.analysis-card .sheet-save {
+  justify-self: start;
+}
+
 .song-title-button h2,
 .song-sheet-header h2,
 .deck-strip-main strong {

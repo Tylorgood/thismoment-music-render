@@ -106,6 +106,16 @@ function sourceSubname(track) {
   return originalName;
 }
 
+function analysisSummary(track) {
+  const analysis = track?.analysis;
+  if (!analysis) return "Not analyzed";
+  const parts = [];
+  if (analysis.bpm) parts.push(`${Math.round(analysis.bpm)} BPM`);
+  if (analysis.key) parts.push(analysis.key);
+  if (analysis.energy_label) parts.push(analysis.energy_label);
+  return parts.length ? parts.join(" / ") : analysis.status || "Analyzed";
+}
+
 function trackText(track) {
   return [
     track?.display_title,
@@ -380,6 +390,7 @@ export default function MusicLibrary() {
   }, [activeIndex, activeTrack, jumpAround, learnedPlays, playbackQueue, shuffleMix, smartMix]);
 
   const recentPlayLog = useMemo(() => playLog.slice(0, 5), [playLog]);
+  const analyzedCount = useMemo(() => tracks.filter((track) => track.analysis).length, [tracks]);
 
   const recordPlay = useCallback(
     (track) => {
@@ -441,6 +452,23 @@ export default function MusicLibrary() {
       return data.playlists.some((playlist) => playlist.id === playlistId) ? current : "smart";
     });
   }, []);
+
+  const analyzeLibrary = useCallback(async () => {
+    setBusy(true);
+    setStatus("Analyzing tracks...");
+    try {
+      const result = await api("/analysis/run", {
+        method: "POST",
+        body: JSON.stringify({ limit: 50, force: false }),
+      });
+      setStatus(`Analyzed ${result.count} track${result.count === 1 ? "" : "s"}`);
+      await loadTracks();
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [loadTracks]);
 
   useEffect(() => {
     let mounted = true;
@@ -1330,6 +1358,10 @@ export default function MusicLibrary() {
           <RefreshCw size={16} />
           Refresh
         </button>
+        <button onClick={analyzeLibrary} disabled={busy}>
+          <Sparkles size={16} />
+          Analyze
+        </button>
         <span>{config?.database_path}</span>
       </section>
 
@@ -1363,6 +1395,8 @@ export default function MusicLibrary() {
               <option value="import_date">Newest import</option>
               <option value="rating">Rating</option>
               <option value="duration">Duration</option>
+              <option value="bpm">BPM</option>
+              <option value="energy">Energy</option>
             </select>
             <label className="check-row">
               <input type="checkbox" checked={unratedOnly} onChange={(event) => setUnratedOnly(event.target.checked)} />
@@ -1386,6 +1420,7 @@ export default function MusicLibrary() {
                 </span>
                 <span className="track-main">
                   <strong><span className="track-id inline">{track.id}</span>{track.display_title}</strong>
+                  {track.analysis && <small className="analysis-line">{analysisSummary(track)}</small>}
                 </span>
                 <span className={`rating-pill rating-${track.rating || "none"}`}>{track.rating || "-"}</span>
               </button>
@@ -1426,6 +1461,10 @@ export default function MusicLibrary() {
                       {sourceSubname(activeTrack) && <small className="family-name">Family: {sourceSubname(activeTrack)}</small>}
                     </h2>
                   </button>
+                  <div className="analysis-pills">
+                    <span>{analysisSummary(activeTrack)}</span>
+                    {activeTrack.analysis?.status && <span>{activeTrack.analysis.status}</span>}
+                  </div>
                   <div className="now-state-row">
                     <span className={`status-chip ${isPlaying ? "live" : "ready"}`}>{isPlaying ? "Live" : "Ready"}</span>
                     <span className={`status-chip ${isAutoMode ? "mixing" : "ready"}`}>{isAutoMode ? (shuffleMix ? "Shuffle radio" : smartMix ? "Smart radio" : "Auto radio") : "Manual"}</span>
@@ -1833,6 +1872,7 @@ export default function MusicLibrary() {
           <Stat label="Unrated" value={stats?.unrated_tracks ?? 0} />
           <Stat label="Favorites" value={stats?.favorites_count ?? 0} />
           <Stat label="Rated" value={`${Math.round((stats?.percentage_rated || 0) * 100)}%`} />
+          <Stat label="Analyzed" value={`${analyzedCount}/${stats?.total_tracks ?? tracks.length}`} />
           {RATINGS.map((rating) => (
             <Stat key={rating.value} label={`${rating.value} tracks`} value={stats?.rating_counts?.[rating.value] ?? 0} />
           ))}
@@ -1916,6 +1956,19 @@ export default function MusicLibrary() {
                 >
                   {activeTrack.favorite ? "Remove favorite" : "Mark favorite"}
                 </button>
+                <div className="analysis-card">
+                  <strong>Track Intelligence</strong>
+                  <span>{analysisSummary(activeTrack)}</span>
+                  <button
+                    className="sheet-save"
+                    onClick={() => api(`/tracks/${activeTrack.id}/analysis?force=true`, { method: "POST" })
+                      .then(() => loadTracks())
+                      .then(() => setStatus(`Analyzed ${activeTrack.display_title}`))
+                      .catch((error) => setStatus(error.message))}
+                  >
+                    Re-analyze track
+                  </button>
+                </div>
               </div>
             )}
 

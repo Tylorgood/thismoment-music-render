@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
+import re
 import tempfile
 import shutil
 import sqlite3
@@ -160,6 +162,25 @@ class MusicLibrary:
                     model_version TEXT,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS track_analysis (
+                    track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+                    bpm REAL,
+                    musical_key TEXT,
+                    energy REAL,
+                    energy_label TEXT,
+                    danceability REAL,
+                    vocal_score REAL,
+                    loudness REAL,
+                    intro_end REAL,
+                    outro_start REAL,
+                    drop_times_json TEXT NOT NULL DEFAULT '[]',
+                    breakdown_times_json TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT NOT NULL DEFAULT '',
+                    analysis_version TEXT NOT NULL DEFAULT 'analysis-v1',
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             ensure_column(conn, "tracks", "cover_art_url", "TEXT")
@@ -234,6 +255,11 @@ class PlaylistCreate(BaseModel):
 
 class PlaylistTrackRequest(BaseModel):
     track_id: str = Field(min_length=1)
+
+
+class AnalysisRunRequest(BaseModel):
+    limit: int = Field(default=25, ge=1, le=250)
+    force: bool = False
 
 
 class RestoreRequest(BaseModel):
@@ -680,33 +706,41 @@ def make_router(library: MusicLibrary) -> APIRouter:
         favorite: Optional[bool] = None,
         unrated: bool = False,
         query: str = "",
-        sort: str = Query(default="id", pattern="^(id|title|import_date|rating|duration)$"),
+        sort: str = Query(default="id", pattern="^(id|title|import_date|rating|duration|bpm|energy)$"),
     ) -> dict[str, Any]:
         library.setup()
         clauses: list[str] = []
         params: list[Any] = []
         if rating:
-            clauses.append("rating = ?")
+            clauses.append("tracks.rating = ?")
             params.append(rating.upper())
         if favorite is not None:
-            clauses.append("favorite = ?")
+            clauses.append("tracks.favorite = ?")
             params.append(1 if favorite else 0)
         if unrated:
-            clauses.append("rating IS NULL")
+            clauses.append("tracks.rating IS NULL")
         if query:
-            clauses.append("(display_title LIKE ? OR original_filename LIKE ? OR id LIKE ?)")
+            clauses.append("(tracks.display_title LIKE ? OR tracks.original_filename LIKE ? OR tracks.id LIKE ? OR tracks.note LIKE ?)")
             like = f"%{query}%"
-            params.extend([like, like, like])
+            params.extend([like, like, like, like])
 
         order_by = {
-            "id": "id ASC",
-            "title": "display_title COLLATE NOCASE ASC",
-            "import_date": "import_date DESC",
-            "rating": "rating IS NULL, rating ASC, id ASC",
-            "duration": "duration_seconds IS NULL, duration_seconds ASC",
+            "id": "tracks.id ASC",
+            "title": "tracks.display_title COLLATE NOCASE ASC",
+            "import_date": "tracks.import_date DESC",
+            "rating": "tracks.rating IS NULL, tracks.rating ASC, tracks.id ASC",
+            "duration": "tracks.duration_seconds IS NULL, tracks.duration_seconds ASC",
+            "bpm": "track_analysis.bpm IS NULL, track_analysis.bpm ASC, tracks.id ASC",
+            "energy": "track_analysis.energy IS NULL, track_analysis.energy DESC, tracks.id ASC",
         }[sort]
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        sql = f"SELECT * FROM tracks {where} ORDER BY {order_by}"
+        sql = f"""
+            SELECT tracks.*, {analysis_select_columns()}
+            FROM tracks
+            LEFT JOIN track_analysis ON track_analysis.track_id = tracks.id
+            {where}
+            ORDER BY {order_by}
+        """
         with library.connect() as conn:
             tracks = [track_to_dict(row) for row in conn.execute(sql, params).fetchall()]
             stats = library_stats(conn)
@@ -716,7 +750,55 @@ def make_router(library: MusicLibrary) -> APIRouter:
     async def read_track(track_id: str) -> dict[str, Any]:
         library.setup()
         with library.connect() as conn:
-            return track_to_dict(get_track(conn, track_id))
+            row = conn.execute(
+                f"""
+                SELECT tracks.*, {analysis_select_columns()}
+                FROM tracks
+                LEFT JOIN track_analysis ON track_analysis.track_id = tracks.id
+                WHERE tracks.id = ?
+                """,
+                (track_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Track not found: {track_id}")
+            return track_to_dict(row)
+
+    @router.post("/tracks/{track_id}/analysis")
+    async def analyze_track_endpoint(track_id: str, force: bool = False) -> dict[str, Any]:
+        library.setup()
+        with library.connect() as conn:
+            track = get_track(conn, track_id)
+            existing = conn.execute("SELECT * FROM track_analysis WHERE track_id = ?", (track_id,)).fetchone()
+            if existing and not force and existing["status"] in {"estimated", "complete"}:
+                return {"track_id": track_id, "analysis": analysis_to_dict(existing), "cached": True}
+            analysis = analyze_track(library, track)
+            save_track_analysis(conn, analysis)
+            row = conn.execute("SELECT * FROM track_analysis WHERE track_id = ?", (track_id,)).fetchone()
+            return {"track_id": track_id, "analysis": analysis_to_dict(row), "cached": False}
+
+    @router.post("/analysis/run")
+    async def run_analysis(payload: AnalysisRunRequest) -> dict[str, Any]:
+        library.setup()
+        analyzed: list[dict[str, Any]] = []
+        skipped = 0
+        with library.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT tracks.*
+                FROM tracks
+                LEFT JOIN track_analysis ON track_analysis.track_id = tracks.id
+                WHERE (? = 1 OR track_analysis.track_id IS NULL OR track_analysis.status = 'error')
+                ORDER BY tracks.id ASC
+                LIMIT ?
+                """,
+                (1 if payload.force else 0, payload.limit),
+            ).fetchall()
+            skipped = conn.execute("SELECT COUNT(*) AS count FROM tracks").fetchone()["count"] - len(rows)
+            for track in rows:
+                analysis = analyze_track(library, track)
+                save_track_analysis(conn, analysis)
+                analyzed.append({"track_id": track["id"], "status": analysis["status"], "energy_label": analysis["energy_label"]})
+        return {"analyzed": analyzed, "count": len(analyzed), "skipped_or_already_analyzed": max(0, skipped)}
 
     @router.patch("/tracks/{track_id}")
     async def update_track(track_id: str, payload: TrackUpdate) -> dict[str, Any]:
@@ -822,6 +904,29 @@ def make_router(library: MusicLibrary) -> APIRouter:
     return router
 
 
+ANALYSIS_VERSION = "analysis-v1"
+
+
+def analysis_select_columns() -> str:
+    return """
+        track_analysis.bpm AS analysis_bpm,
+        track_analysis.musical_key AS analysis_musical_key,
+        track_analysis.energy AS analysis_energy,
+        track_analysis.energy_label AS analysis_energy_label,
+        track_analysis.danceability AS analysis_danceability,
+        track_analysis.vocal_score AS analysis_vocal_score,
+        track_analysis.loudness AS analysis_loudness,
+        track_analysis.intro_end AS analysis_intro_end,
+        track_analysis.outro_start AS analysis_outro_start,
+        track_analysis.drop_times_json AS analysis_drop_times_json,
+        track_analysis.breakdown_times_json AS analysis_breakdown_times_json,
+        track_analysis.status AS analysis_status,
+        track_analysis.error AS analysis_error,
+        track_analysis.analysis_version AS analysis_version,
+        track_analysis.updated_at AS analysis_updated_at
+    """
+
+
 def get_track(conn: sqlite3.Connection, track_id: str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM tracks WHERE id = ?", (track_id,)).fetchone()
     if not row:
@@ -829,15 +934,246 @@ def get_track(conn: sqlite3.Connection, track_id: str) -> sqlite3.Row:
     return row
 
 
+def analysis_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    data = dict(row)
+    return {
+        "bpm": data.get("bpm") or data.get("analysis_bpm"),
+        "key": data.get("musical_key") or data.get("analysis_musical_key"),
+        "energy": data.get("energy") or data.get("analysis_energy"),
+        "energy_label": data.get("energy_label") or data.get("analysis_energy_label"),
+        "danceability": data.get("danceability") or data.get("analysis_danceability"),
+        "vocal_score": data.get("vocal_score") or data.get("analysis_vocal_score"),
+        "loudness": data.get("loudness") or data.get("analysis_loudness"),
+        "intro_end": data.get("intro_end") or data.get("analysis_intro_end"),
+        "outro_start": data.get("outro_start") or data.get("analysis_outro_start"),
+        "drop_times": parse_json_list(data.get("drop_times_json") or data.get("analysis_drop_times_json")),
+        "breakdown_times": parse_json_list(data.get("breakdown_times_json") or data.get("analysis_breakdown_times_json")),
+        "status": data.get("status") or data.get("analysis_status"),
+        "error": data.get("error") or data.get("analysis_error") or "",
+        "analysis_version": data.get("analysis_version"),
+        "updated_at": data.get("updated_at") or data.get("analysis_updated_at"),
+    }
+
+
+def parse_json_list(value: Any) -> list[Any]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, json.JSONDecodeError):
+        return []
+
+
+def track_analysis_from_joined_row(row: sqlite3.Row) -> dict[str, Any] | None:
+    data = dict(row)
+    if "analysis_status" not in data or data.get("analysis_status") is None:
+        return None
+    return analysis_to_dict(row)
+
+
 def track_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
+    analysis = track_analysis_from_joined_row(row)
+    data = {key: value for key, value in data.items() if not key.startswith("analysis_")}
     data["favorite"] = bool(data["favorite"])
     data["listened"] = bool(data["listened"])
+    data["analysis"] = analysis
     if data.get("cover_art_filepath"):
         data["cover_art_endpoint"] = f"/api/music/tracks/{data['id']}/artwork"
     else:
         data["cover_art_endpoint"] = None
     return data
+
+
+def save_track_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> None:
+    conn.execute(
+        """
+        INSERT INTO track_analysis (
+            track_id, bpm, musical_key, energy, energy_label, danceability, vocal_score,
+            loudness, intro_end, outro_start, drop_times_json, breakdown_times_json,
+            status, error, analysis_version, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(track_id) DO UPDATE SET
+            bpm = excluded.bpm,
+            musical_key = excluded.musical_key,
+            energy = excluded.energy,
+            energy_label = excluded.energy_label,
+            danceability = excluded.danceability,
+            vocal_score = excluded.vocal_score,
+            loudness = excluded.loudness,
+            intro_end = excluded.intro_end,
+            outro_start = excluded.outro_start,
+            drop_times_json = excluded.drop_times_json,
+            breakdown_times_json = excluded.breakdown_times_json,
+            status = excluded.status,
+            error = excluded.error,
+            analysis_version = excluded.analysis_version,
+            updated_at = excluded.updated_at
+        """,
+        (
+            analysis["track_id"],
+            analysis.get("bpm"),
+            analysis.get("musical_key"),
+            analysis.get("energy"),
+            analysis.get("energy_label"),
+            analysis.get("danceability"),
+            analysis.get("vocal_score"),
+            analysis.get("loudness"),
+            analysis.get("intro_end"),
+            analysis.get("outro_start"),
+            json.dumps(analysis.get("drop_times") or []),
+            json.dumps(analysis.get("breakdown_times") or []),
+            analysis.get("status", "estimated"),
+            analysis.get("error", ""),
+            analysis.get("analysis_version", ANALYSIS_VERSION),
+            analysis.get("updated_at", utc_now()),
+        ),
+    )
+
+
+def analyze_track(library: MusicLibrary, track: sqlite3.Row) -> dict[str, Any]:
+    base = estimate_track_from_metadata(track)
+    audio_path = Path(track["imported_filepath"])
+    if audio_path.exists():
+        audio_result = analyze_track_audio(audio_path)
+        if audio_result:
+            base.update(audio_result)
+            base["status"] = "complete"
+    base["track_id"] = track["id"]
+    base["analysis_version"] = ANALYSIS_VERSION
+    base["updated_at"] = utc_now()
+    return base
+
+
+def analyze_track_audio(path: Path) -> dict[str, Any] | None:
+    try:
+        import librosa  # type: ignore
+        import numpy as np  # type: ignore
+    except Exception:
+        return None
+
+    try:
+        samples, sample_rate = librosa.load(str(path), sr=22050, mono=True, duration=120)
+        if samples.size < sample_rate:
+            return None
+        tempo, beats = librosa.beat.beat_track(y=samples, sr=sample_rate)
+        rms = librosa.feature.rms(y=samples)[0]
+        centroid = librosa.feature.spectral_centroid(y=samples, sr=sample_rate)[0]
+        chroma = librosa.feature.chroma_cqt(y=samples, sr=sample_rate)
+        key_index = int(np.argmax(np.mean(chroma, axis=1)))
+        key_name = ["C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B"][key_index]
+        energy = clamp01(float(np.percentile(rms, 85) / (np.percentile(rms, 98) + 1e-9)))
+        brightness = clamp01(float(np.mean(centroid) / 4500))
+        danceability = clamp01((len(beats) / max(1, len(samples) / sample_rate) / 3.2) + energy * 0.35)
+        duration = len(samples) / sample_rate
+        drop_times = [round(float(librosa.frames_to_time(frame, sr=sample_rate)), 1) for frame in beats[::32][:4]]
+        return {
+            "bpm": round(float(np.asarray(tempo).item()), 1),
+            "musical_key": key_name,
+            "energy": round(clamp01((energy * 0.7) + (brightness * 0.3)), 2),
+            "energy_label": energy_label((energy * 0.7) + (brightness * 0.3)),
+            "danceability": round(danceability, 2),
+            "vocal_score": None,
+            "loudness": round(float(20 * math.log10(float(np.mean(rms)) + 1e-9)), 1),
+            "intro_end": round(min(32, max(8, duration * 0.08)), 1),
+            "outro_start": round(max(0, duration - min(40, max(16, duration * 0.12))), 1),
+            "drop_times": drop_times,
+            "breakdown_times": [],
+            "error": "",
+        }
+    except Exception as exc:
+        return {"status": "estimated", "error": f"Audio analysis unavailable: {exc}"}
+
+
+def estimate_track_from_metadata(track: sqlite3.Row) -> dict[str, Any]:
+    text = " ".join(
+        str(track[key] or "")
+        for key in ("display_title", "note", "full_generation_prompt", "lyrics", "generation_model_version")
+        if key in track.keys()
+    ).lower()
+    rating_energy = {"S": 0.9, "A": 0.78, "B": 0.62, "C": 0.44, "D": 0.25}
+    energy = rating_energy.get(track["rating"], 0.52)
+    bpm = 112.0
+    musical_key = None
+    danceability = 0.5
+    vocal_score = 0.35
+
+    energy_terms = {
+        "dnb": (174, 0.88, 0.85),
+        "drum and bass": (174, 0.9, 0.85),
+        "dubstep": (140, 0.84, 0.75),
+        "techno": (128, 0.82, 0.82),
+        "club": (124, 0.76, 0.8),
+        "trap": (140, 0.72, 0.7),
+        "bass": (128, 0.75, 0.72),
+        "drop": (132, 0.8, 0.75),
+        "peak": (128, 0.82, 0.78),
+        "soul": (92, 0.48, 0.55),
+        "soulful": (94, 0.5, 0.58),
+        "piano": (82, 0.38, 0.38),
+        "gospel": (96, 0.52, 0.45),
+        "choir": (88, 0.42, 0.32),
+        "cinematic": (96, 0.55, 0.42),
+        "holiday": (102, 0.5, 0.45),
+        "sleigh": (108, 0.58, 0.5),
+        "gentle": (78, 0.3, 0.32),
+        "intimate": (84, 0.34, 0.38),
+    }
+    matches = [values for term, values in energy_terms.items() if term in text]
+    if matches:
+        bpm = sum(item[0] for item in matches) / len(matches)
+        energy = clamp01((energy + sum(item[1] for item in matches) / len(matches)) / 2)
+        danceability = clamp01(sum(item[2] for item in matches) / len(matches))
+
+    key_match = re_search_key(text)
+    if key_match:
+        musical_key = key_match
+    vocal_score = 0.72 if any(term in text for term in ("vocal", "lyrics", "singer", "alto", "choir")) else vocal_score
+    vocal_score = 0.08 if any(term in text for term in ("instrumental", "no vocals", "no guitars or vocals")) else vocal_score
+    duration = track["duration_seconds"] or 180
+    return {
+        "bpm": round(bpm, 1),
+        "musical_key": musical_key,
+        "energy": round(energy, 2),
+        "energy_label": energy_label(energy),
+        "danceability": round(danceability, 2),
+        "vocal_score": round(vocal_score, 2),
+        "loudness": None,
+        "intro_end": round(min(32, max(8, duration * 0.08)), 1),
+        "outro_start": round(max(0, duration - min(40, max(16, duration * 0.12))), 1),
+        "drop_times": [],
+        "breakdown_times": [],
+        "status": "estimated",
+        "error": "Estimated from metadata; install audio analysis dependencies for DSP results.",
+    }
+
+
+def re_search_key(text: str) -> str | None:
+    for key in ("C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"):
+        pattern = rf"\b{key.lower().replace('#', '#').replace('b', 'b')}\s+(minor|major)\b"
+        if re.search(pattern, text):
+            return key
+    return None
+
+
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def energy_label(value: float | None) -> str:
+    if value is None:
+        return "Unknown"
+    if value < 0.35:
+        return "Chill"
+    if value < 0.58:
+        return "Groove"
+    if value < 0.78:
+        return "Drive"
+    return "Peak"
 
 
 def playlist_to_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
