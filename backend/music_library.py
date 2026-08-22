@@ -1041,12 +1041,31 @@ def analyze_track(library: MusicLibrary, track: sqlite3.Row) -> dict[str, Any]:
     if audio_path.exists():
         audio_result = analyze_track_audio(audio_path)
         if audio_result:
+            described_bpm = base.get("bpm") if base.get("status") == "described" else None
             base.update(audio_result)
-            base["status"] = "complete"
+            if described_bpm and audio_result.get("bpm"):
+                base["bpm"] = reconcile_described_bpm(float(described_bpm), float(audio_result["bpm"]))
+                if base["bpm"] == described_bpm:
+                    base["status"] = "described"
+                    base["error"] = "BPM read from description; audio detector found a half/double-time compatible tempo."
+                else:
+                    base["status"] = "complete"
+            else:
+                base["status"] = "complete"
     base["track_id"] = track["id"]
     base["analysis_version"] = ANALYSIS_VERSION
     base["updated_at"] = utc_now()
     return base
+
+
+def reconcile_described_bpm(described_bpm: float, detected_bpm: float) -> float:
+    if abs(described_bpm - detected_bpm) <= 3:
+        return round(detected_bpm, 1)
+    if abs(described_bpm - detected_bpm * 2) <= 6:
+        return round(described_bpm, 1)
+    if abs(described_bpm * 2 - detected_bpm) <= 6:
+        return round(described_bpm, 1)
+    return round(detected_bpm, 1)
 
 
 def analyze_track_audio(path: Path) -> dict[str, Any] | None:
