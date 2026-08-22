@@ -82,9 +82,15 @@ function artworkSrc(track) {
   return track?.cover_art_endpoint ? `${API_BASE}${track.cover_art_endpoint}` : null;
 }
 
+function originalFamilyName(track) {
+  const match = (track?.note || "").match(/^Original family\/name:\s*(.+)$/im);
+  return match?.[1]?.trim() || "";
+}
+
 function trackText(track) {
   return [
     track?.display_title,
+    originalFamilyName(track),
     track?.original_filename,
     track?.full_generation_prompt,
     track?.note,
@@ -1351,22 +1357,26 @@ export default function MusicLibrary() {
           </div>
 
           <div className="track-list">
-            {playbackQueue.map((track) => (
-              <button
-                className={`track-row ${track.id === activeTrack?.id ? "active" : ""}`}
-                key={track.id}
-                onClick={() => selectTrack(track.id, true)}
-              >
-                <span className="track-thumb">
-                  {artworkSrc(track) ? <img src={artworkSrc(track)} alt="" /> : <span>{track.id.slice(1)}</span>}
-                </span>
-                <span className="track-main">
-                  <strong><span className="track-id inline">{track.id}</span>{track.display_title}</strong>
-                  <small>{track.original_filename}</small>
-                </span>
-                <span className={`rating-pill rating-${track.rating || "none"}`}>{track.rating || "-"}</span>
-              </button>
-            ))}
+            {playbackQueue.map((track) => {
+              const familyName = originalFamilyName(track);
+              return (
+                <button
+                  className={`track-row ${track.id === activeTrack?.id ? "active" : ""}`}
+                  key={track.id}
+                  onClick={() => selectTrack(track.id, true)}
+                >
+                  <span className="track-thumb">
+                    {artworkSrc(track) ? <img src={artworkSrc(track)} alt="" /> : <span>{track.id.slice(1)}</span>}
+                  </span>
+                  <span className="track-main">
+                    <strong><span className="track-id inline">{track.id}</span>{track.display_title}</strong>
+                    {familyName && <small className="family-name">Family: {familyName}</small>}
+                    <small className="source-filename">{track.original_filename}</small>
+                  </span>
+                  <span className={`rating-pill rating-${track.rating || "none"}`}>{track.rating || "-"}</span>
+                </button>
+              );
+            })}
             {!tracks.length && <div className="empty-library">No tracks yet. Import an inbox to begin.</div>}
             {Boolean(tracks.length) && !playbackQueue.length && (
               <div className="empty-library">No tracks match this playlist and filter combo.</div>
@@ -1398,7 +1408,10 @@ export default function MusicLibrary() {
                     }}
                     title={isAutoMode ? "Switch to manual to edit" : "Open song details"}
                   >
-                    <h2>{activeTrack.display_title}</h2>
+                    <h2>
+                      <span>{activeTrack.display_title}</span>
+                      {originalFamilyName(activeTrack) && <small className="family-name">Family: {originalFamilyName(activeTrack)}</small>}
+                    </h2>
                   </button>
                   <p>{activeTrack.original_filename}</p>
                   <div className="now-state-row">
@@ -1451,6 +1464,9 @@ export default function MusicLibrary() {
               <div className="next-preview">
                 <span>Up next</span>
                 <strong>{suggestedDeckBTrack?.display_title || "No next track"}</strong>
+                {suggestedDeckBTrack && originalFamilyName(suggestedDeckBTrack) && (
+                  <small className="family-name">Family: {originalFamilyName(suggestedDeckBTrack)}</small>
+                )}
                 <small>{suggestedDeckBTrack ? `${suggestedDeckBTrack.id} / ${formatDuration(suggestedDeckBTrack.duration_seconds)}` : "Pick a playlist or clear filters"}</small>
               </div>
 
@@ -1830,7 +1846,10 @@ export default function MusicLibrary() {
               )}
               <div>
                 <span className="track-id">{activeTrack.id}</span>
-                <h2>{activeTrack.display_title}</h2>
+                <h2>
+                  <span>{activeTrack.display_title}</span>
+                  {originalFamilyName(activeTrack) && <small className="family-name">Family: {originalFamilyName(activeTrack)}</small>}
+                </h2>
                 <p>{formatDuration(activeTrack.duration_seconds)} / {activeTrack.rating || "Unrated"}</p>
               </div>
               <button className="sheet-close" onClick={() => setSongSheetOpen(false)} title="Close">
@@ -2015,7 +2034,10 @@ function DeckStrip({ label, track, playing, ghost = false }) {
           <span className="deck-art-placeholder">{track?.id || "--"}</span>
         )}
         <div>
-          <strong>{track?.display_title || "Load a track"}</strong>
+          <strong>
+            <span>{track?.display_title || "Load a track"}</span>
+            {track && originalFamilyName(track) && <small className="family-name">Family: {originalFamilyName(track)}</small>}
+          </strong>
           <small>{track ? `${track.id} / ${formatDuration(track.duration_seconds)}` : "Idle deck"}</small>
         </div>
       </div>

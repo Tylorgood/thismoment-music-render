@@ -2643,6 +2643,44 @@
   border-radius: 12px;
 }
 
+/* Track identity hierarchy: unique title first, family name secondary */
+.family-name {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted) !important;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.25;
+  opacity: 0.78;
+}
+
+.track-main .family-name {
+  font-size: 0.7rem;
+}
+
+.source-filename {
+  opacity: 0.42;
+}
+
+.song-title-button h2,
+.song-sheet-header h2,
+.deck-strip-main strong {
+  display: grid;
+  gap: 4px;
+}
+
+.song-title-button h2 .family-name,
+.song-sheet-header h2 .family-name {
+  font-size: clamp(0.72rem, 2.4vw, 0.92rem);
+  letter-spacing: 0;
+}
+
+.next-preview .family-name,
+.deck-strip-main .family-name {
+  margin-top: 3px;
+  font-size: 0.72rem;
+}
+
 @media (max-width: 760px) {
   .music-workstation {
     background: linear-gradient(180deg, #080910 0%, #05060a 100%);
@@ -2673,6 +2711,15 @@
   .view-now .now-playing h2 {
     font-size: clamp(2.05rem, 10vw, 3.7rem);
     letter-spacing: 0;
+  }
+
+  .view-now .now-playing h2 .family-name {
+    margin-top: 5px;
+    font-size: 0.82rem;
+  }
+
+  .source-filename {
+    display: none;
   }
 
   .view-now .transport {
