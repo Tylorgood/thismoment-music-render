@@ -229,6 +229,7 @@ export default function MusicLibrary() {
   const liveAudioRef = useRef(null);
   const audioContextRef = useRef(null);
   const mediaGraphRef = useRef(new WeakMap());
+  const wakeLockRef = useRef(null);
   const volumeRef = useRef(0.85);
   const recentTrackIdsRef = useRef([]);
   const lastLoggedPlayRef = useRef({ id: null, at: 0 });
@@ -252,6 +253,8 @@ export default function MusicLibrary() {
   const [playbackMode, setPlaybackMode] = useState("manual");
   const [smartMix, setSmartMix] = useState(true);
   const [shuffleMix, setShuffleMix] = useState(false);
+  const [keepAwake, setKeepAwake] = useState(true);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
   const [jumpAround, setJumpAround] = useState(true);
   const [fadeSeconds, setFadeSeconds] = useState(4);
   const [isFading, setIsFading] = useState(false);
@@ -641,6 +644,20 @@ export default function MusicLibrary() {
     [activeIndex, activeTrack, isAutoMode, isPlaying, jumpAround, learnedPlays, playbackQueue, selectTrack, shuffleMix, smartMix]
   );
 
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !window.MediaMetadata) return;
+    navigator.mediaSession.metadata = activeTrack
+      ? new window.MediaMetadata({
+          title: activeTrack.display_title,
+          artist: activeTrack.source_platform || "Thismoment Music Arcade",
+          album: playlistMeta.label,
+          artwork: artworkSrc(activeTrack)
+            ? [{ src: artworkSrc(activeTrack), sizes: "512x512", type: "image/jpeg" }]
+            : [],
+        })
+      : null;
+  }, [activeTrack, playlistMeta.label]);
+
   const loadSuggestedDeckB = useCallback(() => {
     if (!suggestedDeckBTrack) {
       setStatus("No next deck suggestion available");
@@ -685,9 +702,9 @@ export default function MusicLibrary() {
     deckBRef.current.currentTime = Math.max(0, deckBRef.current.currentTime + seconds);
   };
 
-  const fadeToNextTrack = useCallback(() => {
+  const fadeToNextTrack = useCallback((force = false) => {
     const outgoingAudio = getLiveAudio();
-    if (!outgoingAudio || !isAutoMode || !playbackQueue.length || fadeStartedRef.current) return;
+    if (!outgoingAudio || (!isAutoMode && !force) || !playbackQueue.length || fadeStartedRef.current) return;
     const nextTrack = shuffleMix
       ? randomNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current)
       : smartMix
@@ -793,6 +810,14 @@ export default function MusicLibrary() {
       window.setTimeout(startOverlap, 450);
     }
   }, [activeIndex, activeTrack, ensureAudioGraph, fadeSeconds, getLiveAudio, goRelative, isAutoMode, jumpAround, learnedPlays, playbackQueue, playbackRate, preservePitch, recordPlay, shuffleMix, smartMix, volume]);
+
+  const skipToNextLive = useCallback(() => {
+    if (isPlaying && getLiveAudio() && !fadeStartedRef.current) {
+      fadeToNextTrack(true);
+      return;
+    }
+    goRelative(1, true);
+  }, [fadeToNextTrack, getLiveAudio, goRelative, isPlaying]);
 
   const handleTimeUpdate = useCallback(() => {
     const audio = getLiveAudio();
@@ -1049,6 +1074,95 @@ export default function MusicLibrary() {
     setCurrentTime(liveAudio.currentTime || 0);
   }, [duration, getLiveAudio]);
 
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+    const handlers = {
+      play: () => {
+        const liveAudio = getLiveAudio();
+        if (!liveAudio || !activeTrack) return;
+        ensureAudioGraph(liveAudio, volumeRef.current)?.context.resume?.();
+        liveAudio.play().then(() => {
+          liveAudioRef.current = liveAudio;
+          setIsPlaying(true);
+        }).catch(() => setIsPlaying(false));
+      },
+      pause: () => {
+        getLiveAudio()?.pause();
+        setIsPlaying(false);
+      },
+      nexttrack: skipToNextLive,
+      previoustrack: () => goRelative(-1, true),
+      seekbackward: () => seek(-15),
+      seekforward: () => seek(15),
+    };
+    Object.entries(handlers).forEach(([action, handler]) => {
+      try {
+        navigator.mediaSession.setActionHandler(action, handler);
+      } catch {
+        // Some browsers only support a subset of media session actions.
+      }
+    });
+    return () => {
+      Object.keys(handlers).forEach((action) => {
+        try {
+          navigator.mediaSession.setActionHandler(action, null);
+        } catch {
+          // Ignore unsupported cleanup paths.
+        }
+      });
+    };
+  }, [activeTrack, ensureAudioGraph, getLiveAudio, goRelative, isPlaying, seek, skipToNextLive]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const releaseWakeLock = async () => {
+      if (!wakeLockRef.current) {
+        setWakeLockActive(false);
+        return;
+      }
+      const lock = wakeLockRef.current;
+      wakeLockRef.current = null;
+      try {
+        await lock.release();
+      } catch {
+        // Wake lock can already be released by the browser.
+      }
+      if (!cancelled) setWakeLockActive(false);
+    };
+
+    const requestWakeLock = async () => {
+      if (!keepAwake || !isPlaying || document.visibilityState !== "visible" || !("wakeLock" in navigator)) {
+        await releaseWakeLock();
+        return;
+      }
+      if (wakeLockRef.current) return;
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+        wakeLockRef.current.addEventListener("release", () => {
+          wakeLockRef.current = null;
+          if (!cancelled) setWakeLockActive(false);
+        });
+        if (!cancelled) setWakeLockActive(true);
+      } catch {
+        if (!cancelled) setWakeLockActive(false);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      requestWakeLock();
+    };
+
+    requestWakeLock();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      releaseWakeLock();
+    };
+  }, [isPlaying, keepAwake]);
+
   const markLoopStart = () => {
     setLoopStart(currentTime);
     setStatus(`Loop in: ${formatDuration(currentTime)}`);
@@ -1088,7 +1202,7 @@ export default function MusicLibrary() {
       } else if (event.key === "ArrowLeft") {
         seek(-15);
       } else if (event.key === "ArrowDown") {
-        goRelative(1, true);
+        skipToNextLive();
       } else if (event.key === "ArrowUp") {
         goRelative(-1, true);
       } else if (key === "F") {
@@ -1097,7 +1211,7 @@ export default function MusicLibrary() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeTrack, goRelative, isAutoMode, seek, togglePlayback, updateActiveTrack]);
+  }, [activeTrack, goRelative, isAutoMode, seek, skipToNextLive, togglePlayback, updateActiveTrack]);
 
   return (
     <main className={`music-workstation ${isAutoMode ? "auto-mode" : "manual-mode"} ${djToolsOpen ? "dj-open" : "dj-closed"}`}>
@@ -1287,7 +1401,7 @@ export default function MusicLibrary() {
                 <button className="play-button" onClick={togglePlayback} title="Play/Pause">
                   {isPlaying ? <Pause size={22} /> : <Play size={22} />}
                 </button>
-                <button onClick={() => goRelative(1, true)} title="Next">
+                <button onClick={skipToNextLive} title="Next">
                   <SkipForward size={18} />
                 </button>
                 <button onClick={() => seek(-15)}>-15s</button>
@@ -1414,6 +1528,10 @@ export default function MusicLibrary() {
 
               {isAutoMode && djToolsOpen && (
                 <div className="mix-controls">
+                  <label className="mix-toggle">
+                    <input type="checkbox" checked={keepAwake} onChange={(event) => setKeepAwake(event.target.checked)} />
+                    Keep awake {wakeLockActive ? "on" : "ready"}
+                  </label>
                   <label className="mix-toggle">
                     <input
                       type="checkbox"
