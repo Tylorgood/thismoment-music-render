@@ -585,7 +585,7 @@ export default function MusicLibrary() {
     try {
       const result = await api("/analysis/run", {
         method: "POST",
-        body: JSON.stringify({ limit: 250, force: true, mode: "metadata" }),
+        body: JSON.stringify({ limit: 250, force: false, mode: "metadata" }),
       });
       setStatus(`Refreshed ${result.count} track${result.count === 1 ? "" : "s"}`);
       await loadTracks();

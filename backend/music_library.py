@@ -789,12 +789,14 @@ def make_router(library: MusicLibrary) -> APIRouter:
         library.setup()
         analyzed: list[dict[str, Any]] = []
         skipped = 0
-        if payload.force:
+        if payload.force and payload.mode == "metadata":
+            analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status != 'complete' OR track_analysis.beat_interval IS NULL"
+        elif payload.force:
             analysis_where = "1 = 1"
         elif payload.mode == "audio":
             analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status IN ('error', 'estimated')"
         else:
-            analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status = 'error'"
+            analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status = 'error' OR track_analysis.beat_interval IS NULL"
         effective_limit = min(payload.limit, 5) if payload.mode == "audio" else payload.limit
         with library.connect() as conn:
             rows = conn.execute(
