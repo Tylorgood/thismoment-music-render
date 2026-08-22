@@ -88,6 +88,7 @@
 .filters input,
 .filters select,
 .playlist-create input,
+.sheet-title input,
 .sheet-playlist-create input,
 .note-field textarea {
   width: 100%;
@@ -102,6 +103,7 @@
 .filters input,
 .filters select,
 .playlist-create input,
+.sheet-title input,
 .sheet-playlist-create input {
   height: 38px;
   padding: 0 10px;
@@ -1121,6 +1123,7 @@
   height: 38px;
 }
 
+.sheet-title,
 .sheet-note {
   display: grid;
   gap: 7px;
@@ -1128,6 +1131,12 @@
   font-size: 0.76rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.sheet-title input {
+  min-height: 42px;
+  font-size: 1rem;
+  text-transform: none;
 }
 
 .sheet-note textarea {

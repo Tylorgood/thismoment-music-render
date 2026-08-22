@@ -223,6 +223,7 @@ export default function MusicLibrary() {
   const [playlists, setPlaylists] = useState([]);
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [songSheetOpen, setSongSheetOpen] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
   const [draftNote, setDraftNote] = useState("");
   const [playbackMode, setPlaybackMode] = useState("manual");
   const [smartMix, setSmartMix] = useState(true);
@@ -422,6 +423,7 @@ export default function MusicLibrary() {
   }, [deckBTrack?.id, playbackRate, preservePitch]);
 
   useEffect(() => {
+    setDraftTitle(activeTrack?.display_title || "");
     setDraftNote(activeTrack?.note || "");
     setLoopStart(null);
     setLoopEnd(null);
@@ -429,7 +431,7 @@ export default function MusicLibrary() {
     setCurrentTime(0);
     setDuration(activeTrack?.duration_seconds || 0);
     setWaveformBars([]);
-  }, [activeTrack?.duration_seconds, activeTrack?.id, activeTrack?.note]);
+  }, [activeTrack?.display_title, activeTrack?.duration_seconds, activeTrack?.id, activeTrack?.note]);
 
   useEffect(() => {
     if (!activeTrack?.id) return;
@@ -490,6 +492,7 @@ export default function MusicLibrary() {
       resumeMixedTrackRef.current = null;
       audio.load();
       let cancelled = false;
+      let resumeStarted = false;
       if (handoffVisualTimerRef.current) {
         window.clearInterval(handoffVisualTimerRef.current);
       }
@@ -498,30 +501,68 @@ export default function MusicLibrary() {
         setCurrentTime(mixedResume.audio.currentTime || 0);
       }, 200);
       const resumeLiveDeck = () => {
-        if (cancelled || !audioRef.current) return;
+        if (cancelled || resumeStarted || !audioRef.current) return;
+        resumeStarted = true;
         const liveTime = Math.max(0, mixedResume.audio?.currentTime || 0);
-        audioRef.current.currentTime = liveTime;
+        const mainAudio = audioRef.current;
+        mainAudio.volume = 0;
         setCurrentTime(liveTime);
-        audioRef.current.volume = volumeRef.current;
-        audioRef.current.play().then(() => {
-          mixedResume.audio?.pause();
-          incomingMixAudioRef.current = null;
-          if (handoffVisualTimerRef.current) {
-            window.clearInterval(handoffVisualTimerRef.current);
-            handoffVisualTimerRef.current = null;
+
+        let seekSettled = false;
+        const startMainAfterSeek = () => {
+          if (cancelled || seekSettled || !audioRef.current) return;
+          seekSettled = true;
+          const updatedLiveTime = Math.max(0, mixedResume.audio?.currentTime || liveTime);
+          const mainDeck = audioRef.current;
+          mainDeck.volume = 0;
+          try {
+            mainDeck.currentTime = Math.min(updatedLiveTime, Math.max(0, (mainDeck.duration || updatedLiveTime + 1) - 0.15));
+          } catch {
+            // Some mobile browsers reject a seek while metadata is settling; start silently and let the mix cover it.
           }
-          setIsPlaying(true);
-          setDeckBPlaying(false);
-          setDeckBId(null);
-          setCrossfader(0);
-          setIsFading(false);
-        }).catch(() => setIsPlaying(false));
+          mainDeck.play().then(() => {
+            setIsPlaying(true);
+            const handoffStartedAt = Date.now();
+            const handoffMs = 520;
+            const handoffTimer = window.setInterval(() => {
+              if (cancelled || !audioRef.current) {
+                window.clearInterval(handoffTimer);
+                return;
+              }
+              const progress = Math.min(1, (Date.now() - handoffStartedAt) / handoffMs);
+              audioRef.current.volume = volumeRef.current * progress;
+              if (mixedResume.audio) {
+                mixedResume.audio.volume = volumeRef.current * (1 - progress);
+                setCurrentTime(mixedResume.audio.currentTime || audioRef.current.currentTime || 0);
+              }
+              if (progress >= 1) {
+                window.clearInterval(handoffTimer);
+                mixedResume.audio?.pause();
+                incomingMixAudioRef.current = null;
+                if (handoffVisualTimerRef.current) {
+                  window.clearInterval(handoffVisualTimerRef.current);
+                  handoffVisualTimerRef.current = null;
+                }
+                audioRef.current.volume = volumeRef.current;
+                setCurrentTime(audioRef.current.currentTime || 0);
+                setDeckBPlaying(false);
+                setDeckBId(null);
+                setCrossfader(0);
+                setIsFading(false);
+              }
+            }, 40);
+          }).catch(() => setIsPlaying(false));
+        };
+
+        mainAudio.addEventListener("seeked", startMainAfterSeek, { once: true });
+        window.setTimeout(startMainAfterSeek, 300);
       };
 
       if (audio.readyState >= 2) {
         resumeLiveDeck();
       } else {
         audio.addEventListener("canplay", resumeLiveDeck, { once: true });
+        audio.addEventListener("loadedmetadata", resumeLiveDeck, { once: true });
         window.setTimeout(resumeLiveDeck, 350);
       }
 
@@ -532,6 +573,7 @@ export default function MusicLibrary() {
           handoffVisualTimerRef.current = null;
         }
         audio.removeEventListener("canplay", resumeLiveDeck);
+        audio.removeEventListener("loadedmetadata", resumeLiveDeck);
       };
     }
 
@@ -873,6 +915,21 @@ export default function MusicLibrary() {
       await updateActiveTrack({ note });
     } catch (error) {
       setStatus(error.message);
+    }
+  };
+
+  const saveDraftTitle = async () => {
+    if (!activeTrack) return;
+    const displayTitle = draftTitle.trim() || activeTrack.id;
+    if (displayTitle === activeTrack.display_title) return;
+    setDraftTitle(displayTitle);
+    setTracks((items) => items.map((item) => (item.id === activeTrack.id ? { ...item, display_title: displayTitle } : item)));
+    try {
+      await updateActiveTrack({ display_title: displayTitle });
+    } catch (error) {
+      setStatus(error.message);
+      setDraftTitle(activeTrack.display_title);
+      setTracks((items) => items.map((item) => (item.id === activeTrack.id ? activeTrack : item)));
     }
   };
 
@@ -1482,6 +1539,20 @@ export default function MusicLibrary() {
                 <X size={18} />
               </button>
             </div>
+
+            <label className="sheet-title">
+              Track name
+              <input
+                value={draftTitle}
+                onChange={(event) => setDraftTitle(event.target.value)}
+                onBlur={saveDraftTitle}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+                placeholder="Give this version its own name"
+              />
+            </label>
+            <button className="sheet-save" onClick={saveDraftTitle}>Save name</button>
 
             <label className="sheet-note">
               Comment
