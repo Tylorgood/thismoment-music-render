@@ -136,6 +136,16 @@ function smartNextTrack(current, queue, recentIds = [], jumpAround = true, playC
   return jumpAround ? weightedPick(ranked.slice(0, Math.min(12, ranked.length))) : ranked[0].track;
 }
 
+function randomNextTrack(current, queue, recentIds = []) {
+  if (!queue.length) return null;
+  const recent = new Set(recentIds);
+  const fresh = queue.filter((track) => track.id !== current?.id && !recent.has(track.id));
+  const fallback = queue.filter((track) => track.id !== current?.id);
+  const pool = fresh.length ? fresh : fallback;
+  if (!pool.length) return queue[0];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function avoidAdjacentExceptional(items) {
   const queue = [];
   const remaining = [...items];
@@ -228,6 +238,7 @@ export default function MusicLibrary() {
   const [draftNote, setDraftNote] = useState("");
   const [playbackMode, setPlaybackMode] = useState("manual");
   const [smartMix, setSmartMix] = useState(true);
+  const [shuffleMix, setShuffleMix] = useState(false);
   const [jumpAround, setJumpAround] = useState(true);
   const [fadeSeconds, setFadeSeconds] = useState(4);
   const [isFading, setIsFading] = useState(false);
@@ -295,10 +306,11 @@ export default function MusicLibrary() {
 
   const suggestedDeckBTrack = useMemo(() => {
     if (!playbackQueue.length) return null;
+    if (shuffleMix) return randomNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current);
     return smartMix
       ? smartNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current, jumpAround, learnedPlays)
       : playbackQueue[(Math.max(activeIndex, 0) + 1) % playbackQueue.length];
-  }, [activeIndex, activeTrack, jumpAround, learnedPlays, playbackQueue, smartMix]);
+  }, [activeIndex, activeTrack, jumpAround, learnedPlays, playbackQueue, shuffleMix, smartMix]);
 
   const recentPlayLog = useMemo(() => playLog.slice(0, 5), [playLog]);
 
@@ -593,11 +605,13 @@ export default function MusicLibrary() {
   const goRelative = useCallback(
     (offset, autoplay = isPlaying) => {
       if (!playbackQueue.length) return;
-      if (isAutoMode && smartMix && offset > 0) {
-        const nextTrack = smartNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current, jumpAround, learnedPlays);
+      if (isAutoMode && offset > 0 && (shuffleMix || smartMix)) {
+        const nextTrack = shuffleMix
+          ? randomNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current)
+          : smartNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current, jumpAround, learnedPlays);
         if (nextTrack) {
           selectTrack(nextTrack.id, autoplay);
-          setStatus(`Smart mix: ${nextTrack.display_title}`);
+          setStatus(`${shuffleMix ? "Shuffle" : "Smart mix"}: ${nextTrack.display_title}`);
           return;
         }
       }
@@ -605,7 +619,7 @@ export default function MusicLibrary() {
       const nextIndex = (startIndex + offset + playbackQueue.length) % playbackQueue.length;
       selectTrack(playbackQueue[nextIndex].id, autoplay);
     },
-    [activeIndex, activeTrack, isAutoMode, isPlaying, jumpAround, learnedPlays, playbackQueue, selectTrack, smartMix]
+    [activeIndex, activeTrack, isAutoMode, isPlaying, jumpAround, learnedPlays, playbackQueue, selectTrack, shuffleMix, smartMix]
   );
 
   const loadSuggestedDeckB = useCallback(() => {
@@ -655,9 +669,11 @@ export default function MusicLibrary() {
   const fadeToNextTrack = useCallback(() => {
     const outgoingAudio = getLiveAudio();
     if (!outgoingAudio || !isAutoMode || !playbackQueue.length || fadeStartedRef.current) return;
-    const nextTrack = smartMix
-      ? smartNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current, jumpAround, learnedPlays)
-      : playbackQueue[(Math.max(activeIndex, 0) + 1) % playbackQueue.length];
+    const nextTrack = shuffleMix
+      ? randomNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current)
+      : smartMix
+        ? smartNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current, jumpAround, learnedPlays)
+        : playbackQueue[(Math.max(activeIndex, 0) + 1) % playbackQueue.length];
     if (!nextTrack || nextTrack.id === activeTrack?.id) return;
 
     fadeStartedRef.current = true;
@@ -757,7 +773,7 @@ export default function MusicLibrary() {
       incomingAudio.load();
       window.setTimeout(startOverlap, 450);
     }
-  }, [activeIndex, activeTrack, ensureAudioGraph, fadeSeconds, getLiveAudio, goRelative, isAutoMode, jumpAround, learnedPlays, playbackQueue, playbackRate, preservePitch, recordPlay, smartMix, volume]);
+  }, [activeIndex, activeTrack, ensureAudioGraph, fadeSeconds, getLiveAudio, goRelative, isAutoMode, jumpAround, learnedPlays, playbackQueue, playbackRate, preservePitch, recordPlay, shuffleMix, smartMix, volume]);
 
   const handleTimeUpdate = useCallback(() => {
     const audio = getLiveAudio();
@@ -770,13 +786,13 @@ export default function MusicLibrary() {
       audio.currentTime = loopStart;
       return;
     }
-    if (!isAutoMode || !smartMix || fadeStartedRef.current) return;
+    if (!isAutoMode || (!smartMix && !shuffleMix) || fadeStartedRef.current) return;
     if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
     const remaining = audio.duration - audio.currentTime;
     if (remaining > 0 && remaining <= Math.max(1, fadeSeconds)) {
       fadeToNextTrack();
     }
-  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart, smartMix]);
+  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart, shuffleMix, smartMix]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -790,7 +806,7 @@ export default function MusicLibrary() {
         audio.currentTime = loopStart;
         return;
       }
-      if (!isAutoMode || !smartMix || fadeStartedRef.current) return;
+      if (!isAutoMode || (!smartMix && !shuffleMix) || fadeStartedRef.current) return;
       if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
       const remaining = audio.duration - audio.currentTime;
       if (remaining > 0 && remaining <= Math.max(1, fadeSeconds)) {
@@ -798,7 +814,7 @@ export default function MusicLibrary() {
       }
     }, 180);
     return () => window.clearInterval(timer);
-  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart, smartMix]);
+  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart, shuffleMix, smartMix]);
 
   const updateActiveTrack = useCallback(
     async (patch, advance = false) => {
@@ -1355,7 +1371,25 @@ export default function MusicLibrary() {
               {isAutoMode && djToolsOpen && (
                 <div className="mix-controls">
                   <label className="mix-toggle">
-                    <input type="checkbox" checked={smartMix} onChange={(event) => setSmartMix(event.target.checked)} />
+                    <input
+                      type="checkbox"
+                      checked={shuffleMix}
+                      onChange={(event) => {
+                        setShuffleMix(event.target.checked);
+                        if (event.target.checked) setSmartMix(false);
+                      }}
+                    />
+                    Random shuffle
+                  </label>
+                  <label className="mix-toggle">
+                    <input
+                      type="checkbox"
+                      checked={smartMix}
+                      onChange={(event) => {
+                        setSmartMix(event.target.checked);
+                        if (event.target.checked) setShuffleMix(false);
+                      }}
+                    />
                     Smart mix
                   </label>
                   <label className="mix-toggle">
