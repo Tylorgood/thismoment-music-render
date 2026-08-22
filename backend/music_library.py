@@ -213,6 +213,14 @@ class ImportRequest(BaseModel):
 
 class TrackUpdate(BaseModel):
     display_title: Optional[str] = None
+    source_platform: Optional[str] = None
+    source_generation_id: Optional[str] = None
+    creation_date: Optional[str] = None
+    generation_model_version: Optional[str] = None
+    full_generation_prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    lyrics: Optional[str] = None
+    cover_art_url: Optional[str] = None
     rating: Optional[str] = None
     favorite: Optional[bool] = None
     note: Optional[str] = None
@@ -718,6 +726,22 @@ def make_router(library: MusicLibrary) -> APIRouter:
         if payload.display_title is not None:
             updates.append("display_title = ?")
             params.append(payload.display_title.strip() or track_id)
+        editable_text_fields = {
+            "source_platform": 80,
+            "source_generation_id": 180,
+            "creation_date": 80,
+            "generation_model_version": 120,
+            "full_generation_prompt": 12000,
+            "negative_prompt": 4000,
+            "lyrics": 12000,
+            "cover_art_url": 1000,
+        }
+        for field_name, max_length in editable_text_fields.items():
+            value = getattr(payload, field_name)
+            if value is not None:
+                updates.append(f"{field_name} = ?")
+                cleaned_value = value.strip()
+                params.append(cleaned_value[:max_length] if cleaned_value else None)
         if payload.rating is not None:
             rating = payload.rating.upper().strip()
             if rating not in VALID_RATINGS:

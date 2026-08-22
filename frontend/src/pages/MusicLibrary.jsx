@@ -196,6 +196,18 @@ async function api(path, options = {}) {
 
 const PLAY_LOG_STORAGE_KEY = "musicAutoDjPlayLog";
 const PLAY_COUNTS_STORAGE_KEY = "musicAutoDjPlayCounts";
+const METADATA_FIELDS = [
+  { key: "source_platform", label: "Source" },
+  { key: "source_generation_id", label: "Generation ID" },
+  { key: "creation_date", label: "Created" },
+  { key: "generation_model_version", label: "Model" },
+  { key: "cover_art_url", label: "Cover URL" },
+];
+const METADATA_TEXT_FIELDS = [
+  { key: "full_generation_prompt", label: "Prompt", placeholder: "Style, prompt, or generation notes..." },
+  { key: "negative_prompt", label: "Negative prompt", placeholder: "Anything excluded from the generation..." },
+  { key: "lyrics", label: "Lyrics", placeholder: "Lyrics or spoken-word text..." },
+];
 
 function readStoredJson(key, fallback) {
   if (typeof window === "undefined") return fallback;
@@ -235,6 +247,7 @@ export default function MusicLibrary() {
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [songSheetOpen, setSongSheetOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
+  const [draftMetadata, setDraftMetadata] = useState({});
   const [draftNote, setDraftNote] = useState("");
   const [playbackMode, setPlaybackMode] = useState("manual");
   const [smartMix, setSmartMix] = useState(true);
@@ -443,6 +456,12 @@ export default function MusicLibrary() {
 
   useEffect(() => {
     setDraftTitle(activeTrack?.display_title || "");
+    setDraftMetadata(
+      [...METADATA_FIELDS, ...METADATA_TEXT_FIELDS].reduce((metadata, field) => {
+        metadata[field.key] = activeTrack?.[field.key] || "";
+        return metadata;
+      }, {})
+    );
     setDraftNote(activeTrack?.note || "");
     setLoopStart(null);
     setLoopEnd(null);
@@ -450,7 +469,7 @@ export default function MusicLibrary() {
     setCurrentTime(0);
     setDuration(activeTrack?.duration_seconds || 0);
     setWaveformBars([]);
-  }, [activeTrack?.display_title, activeTrack?.duration_seconds, activeTrack?.id, activeTrack?.note]);
+  }, [activeTrack]);
 
   useEffect(() => {
     if (!activeTrack?.id) return;
@@ -853,6 +872,26 @@ export default function MusicLibrary() {
     }
   };
 
+  const saveDraftMetadata = async () => {
+    if (!activeTrack) return;
+    const patch = {};
+    [...METADATA_FIELDS, ...METADATA_TEXT_FIELDS].forEach((field) => {
+      const value = draftMetadata[field.key] || "";
+      if (value !== (activeTrack[field.key] || "")) {
+        patch[field.key] = value;
+      }
+    });
+    if (!Object.keys(patch).length) return;
+    const optimisticTrack = { ...activeTrack, ...patch };
+    setTracks((items) => items.map((item) => (item.id === activeTrack.id ? optimisticTrack : item)));
+    try {
+      await updateActiveTrack(patch);
+    } catch (error) {
+      setStatus(error.message);
+      setTracks((items) => items.map((item) => (item.id === activeTrack.id ? activeTrack : item)));
+    }
+  };
+
   const createPlaylist = async (addCurrentTrack = false) => {
     const name = newPlaylistName.trim();
     if (!name) return;
@@ -1065,7 +1104,12 @@ export default function MusicLibrary() {
       <section className="music-topbar">
         <div>
           <p className="music-kicker">Thismoment</p>
-          <h1>Music Library</h1>
+          <h1>Music Arcade</h1>
+          <div className="arcade-marquee" aria-label="System status">
+            <span>Live mix engine</span>
+            <span>{stats?.total_tracks || tracks.length} tracks online</span>
+            <span>{playlistMeta.label}</span>
+          </div>
         </div>
         <div className="music-status">{status}</div>
       </section>
@@ -1597,6 +1641,32 @@ export default function MusicLibrary() {
               />
             </label>
             <button className="sheet-save" onClick={saveDraftTitle}>Save name</button>
+
+            <div className="sheet-metadata">
+              <strong>Metadata</strong>
+              <div className="sheet-metadata-grid">
+                {METADATA_FIELDS.map((field) => (
+                  <label key={field.key} className="sheet-field">
+                    {field.label}
+                    <input
+                      value={draftMetadata[field.key] || ""}
+                      onChange={(event) => setDraftMetadata((metadata) => ({ ...metadata, [field.key]: event.target.value }))}
+                    />
+                  </label>
+                ))}
+              </div>
+              {METADATA_TEXT_FIELDS.map((field) => (
+                <label key={field.key} className="sheet-field">
+                  {field.label}
+                  <textarea
+                    value={draftMetadata[field.key] || ""}
+                    onChange={(event) => setDraftMetadata((metadata) => ({ ...metadata, [field.key]: event.target.value }))}
+                    placeholder={field.placeholder}
+                  />
+                </label>
+              ))}
+              <button className="sheet-save" onClick={saveDraftMetadata}>Save metadata</button>
+            </div>
 
             <label className="sheet-note">
               Comment
