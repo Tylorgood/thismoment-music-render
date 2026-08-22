@@ -87,10 +87,30 @@ function originalFamilyName(track) {
   return match?.[1]?.trim() || "";
 }
 
+function humanOriginalName(track) {
+  const filename = track?.original_filename || "";
+  return filename
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/\s+-\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "")
+    .replace(/^\d+\s+-\s+/, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sourceSubname(track) {
+  const familyName = originalFamilyName(track);
+  if (familyName) return familyName;
+  const originalName = humanOriginalName(track);
+  if (!originalName || originalName.toLowerCase() === (track?.display_title || "").toLowerCase()) return "";
+  return originalName;
+}
+
 function trackText(track) {
   return [
     track?.display_title,
     originalFamilyName(track),
+    humanOriginalName(track),
     track?.original_filename,
     track?.full_generation_prompt,
     track?.note,
@@ -217,10 +237,8 @@ const PLAY_LOG_STORAGE_KEY = "musicAutoDjPlayLog";
 const PLAY_COUNTS_STORAGE_KEY = "musicAutoDjPlayCounts";
 const METADATA_FIELDS = [
   { key: "source_platform", label: "Source" },
-  { key: "source_generation_id", label: "Generation ID" },
   { key: "creation_date", label: "Created" },
   { key: "generation_model_version", label: "Model" },
-  { key: "cover_art_url", label: "Cover URL" },
 ];
 const METADATA_TEXT_FIELDS = [
   { key: "full_generation_prompt", label: "Prompt", placeholder: "Style, prompt, or generation notes..." },
@@ -1358,7 +1376,7 @@ export default function MusicLibrary() {
 
           <div className="track-list">
             {playbackQueue.map((track) => {
-              const familyName = originalFamilyName(track);
+              const familyName = sourceSubname(track);
               return (
                 <button
                   className={`track-row ${track.id === activeTrack?.id ? "active" : ""}`}
@@ -1371,7 +1389,6 @@ export default function MusicLibrary() {
                   <span className="track-main">
                     <strong><span className="track-id inline">{track.id}</span>{track.display_title}</strong>
                     {familyName && <small className="family-name">Family: {familyName}</small>}
-                    <small className="source-filename">{track.original_filename}</small>
                   </span>
                   <span className={`rating-pill rating-${track.rating || "none"}`}>{track.rating || "-"}</span>
                 </button>
@@ -1410,10 +1427,9 @@ export default function MusicLibrary() {
                   >
                     <h2>
                       <span>{activeTrack.display_title}</span>
-                      {originalFamilyName(activeTrack) && <small className="family-name">Family: {originalFamilyName(activeTrack)}</small>}
+                      {sourceSubname(activeTrack) && <small className="family-name">Family: {sourceSubname(activeTrack)}</small>}
                     </h2>
                   </button>
-                  <p>{activeTrack.original_filename}</p>
                   <div className="now-state-row">
                     <span className={`status-chip ${isPlaying ? "live" : "ready"}`}>{isPlaying ? "Live" : "Ready"}</span>
                     <span className={`status-chip ${isAutoMode ? "mixing" : "ready"}`}>{isAutoMode ? (shuffleMix ? "Shuffle radio" : smartMix ? "Smart radio" : "Auto radio") : "Manual"}</span>
@@ -1464,8 +1480,8 @@ export default function MusicLibrary() {
               <div className="next-preview">
                 <span>Up next</span>
                 <strong>{suggestedDeckBTrack?.display_title || "No next track"}</strong>
-                {suggestedDeckBTrack && originalFamilyName(suggestedDeckBTrack) && (
-                  <small className="family-name">Family: {originalFamilyName(suggestedDeckBTrack)}</small>
+                {suggestedDeckBTrack && sourceSubname(suggestedDeckBTrack) && (
+                  <small className="family-name">Family: {sourceSubname(suggestedDeckBTrack)}</small>
                 )}
                 <small>{suggestedDeckBTrack ? `${suggestedDeckBTrack.id} / ${formatDuration(suggestedDeckBTrack.duration_seconds)}` : "Pick a playlist or clear filters"}</small>
               </div>
@@ -1848,7 +1864,7 @@ export default function MusicLibrary() {
                 <span className="track-id">{activeTrack.id}</span>
                 <h2>
                   <span>{activeTrack.display_title}</span>
-                  {originalFamilyName(activeTrack) && <small className="family-name">Family: {originalFamilyName(activeTrack)}</small>}
+                  {sourceSubname(activeTrack) && <small className="family-name">Family: {sourceSubname(activeTrack)}</small>}
                 </h2>
                 <p>{formatDuration(activeTrack.duration_seconds)} / {activeTrack.rating || "Unrated"}</p>
               </div>
@@ -2036,7 +2052,7 @@ function DeckStrip({ label, track, playing, ghost = false }) {
         <div>
           <strong>
             <span>{track?.display_title || "Load a track"}</span>
-            {track && originalFamilyName(track) && <small className="family-name">Family: {originalFamilyName(track)}</small>}
+            {track && sourceSubname(track) && <small className="family-name">Family: {sourceSubname(track)}</small>}
           </strong>
           <small>{track ? `${track.id} / ${formatDuration(track.duration_seconds)}` : "Idle deck"}</small>
         </div>
