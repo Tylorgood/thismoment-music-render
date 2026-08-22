@@ -533,13 +533,13 @@ export default function MusicLibrary() {
 
   const analyzeLibrary = useCallback(async () => {
     setBusy(true);
-    setStatus("Analyzing tracks...");
+    setStatus("Refreshing BPM and track analysis...");
     try {
       const result = await api("/analysis/run", {
         method: "POST",
-        body: JSON.stringify({ limit: 50, force: false }),
+        body: JSON.stringify({ limit: 250, force: true, mode: "metadata" }),
       });
-      setStatus(`Analyzed ${result.count} track${result.count === 1 ? "" : "s"}`);
+      setStatus(`Refreshed ${result.count} track${result.count === 1 ? "" : "s"}`);
       await loadTracks();
     } catch (error) {
       setStatus(error.message);

@@ -15,7 +15,7 @@ import wave
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import requests
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -260,6 +260,7 @@ class PlaylistTrackRequest(BaseModel):
 class AnalysisRunRequest(BaseModel):
     limit: int = Field(default=25, ge=1, le=250)
     force: bool = False
+    mode: Literal["audio", "metadata"] = "audio"
 
 
 class RestoreRequest(BaseModel):
@@ -769,9 +770,9 @@ def make_router(library: MusicLibrary) -> APIRouter:
         with library.connect() as conn:
             track = get_track(conn, track_id)
             existing = conn.execute("SELECT * FROM track_analysis WHERE track_id = ?", (track_id,)).fetchone()
-            if existing and not force and existing["status"] in {"estimated", "complete"}:
+            if existing and not force and existing["status"] in {"described", "estimated", "complete"}:
                 return {"track_id": track_id, "analysis": analysis_to_dict(existing), "cached": True}
-            analysis = analyze_track(library, track)
+            analysis = analyze_track(library, track, use_audio=True)
             save_track_analysis(conn, analysis)
             row = conn.execute("SELECT * FROM track_analysis WHERE track_id = ?", (track_id,)).fetchone()
             return {"track_id": track_id, "analysis": analysis_to_dict(row), "cached": False}
@@ -795,9 +796,16 @@ def make_router(library: MusicLibrary) -> APIRouter:
             ).fetchall()
             skipped = conn.execute("SELECT COUNT(*) AS count FROM tracks").fetchone()["count"] - len(rows)
             for track in rows:
-                analysis = analyze_track(library, track)
+                analysis = analyze_track(library, track, use_audio=payload.mode == "audio")
                 save_track_analysis(conn, analysis)
-                analyzed.append({"track_id": track["id"], "status": analysis["status"], "energy_label": analysis["energy_label"]})
+                analyzed.append(
+                    {
+                        "track_id": track["id"],
+                        "status": analysis["status"],
+                        "bpm": analysis["bpm"],
+                        "energy_label": analysis["energy_label"],
+                    }
+                )
         return {"analyzed": analyzed, "count": len(analyzed), "skipped_or_already_analyzed": max(0, skipped)}
 
     @router.patch("/tracks/{track_id}")
@@ -1035,10 +1043,10 @@ def save_track_analysis(conn: sqlite3.Connection, analysis: dict[str, Any]) -> N
     )
 
 
-def analyze_track(library: MusicLibrary, track: sqlite3.Row) -> dict[str, Any]:
+def analyze_track(library: MusicLibrary, track: sqlite3.Row, use_audio: bool = True) -> dict[str, Any]:
     base = estimate_track_from_metadata(track)
     audio_path = Path(track["imported_filepath"])
-    if audio_path.exists():
+    if use_audio and audio_path.exists():
         audio_result = analyze_track_audio(audio_path)
         if audio_result:
             described_bpm = base.get("bpm") if base.get("status") == "described" else None
