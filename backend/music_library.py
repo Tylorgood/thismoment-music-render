@@ -1098,6 +1098,7 @@ def estimate_track_from_metadata(track: sqlite3.Row) -> dict[str, Any]:
     rating_energy = {"S": 0.9, "A": 0.78, "B": 0.62, "C": 0.44, "D": 0.25}
     energy = rating_energy.get(track["rating"], 0.52)
     bpm = 112.0
+    bpm_source = "estimated"
     musical_key = None
     danceability = 0.5
     vocal_score = 0.35
@@ -1128,6 +1129,10 @@ def estimate_track_from_metadata(track: sqlite3.Row) -> dict[str, Any]:
         bpm = sum(item[0] for item in matches) / len(matches)
         energy = clamp01((energy + sum(item[1] for item in matches) / len(matches)) / 2)
         danceability = clamp01(sum(item[2] for item in matches) / len(matches))
+    described_bpm = extract_described_bpm(text)
+    if described_bpm:
+        bpm = described_bpm
+        bpm_source = "described"
 
     key_match = re_search_key(text)
     if key_match:
@@ -1147,9 +1152,29 @@ def estimate_track_from_metadata(track: sqlite3.Row) -> dict[str, Any]:
         "outro_start": round(max(0, duration - min(40, max(16, duration * 0.12))), 1),
         "drop_times": [],
         "breakdown_times": [],
-        "status": "estimated",
-        "error": "Estimated from metadata; install audio analysis dependencies for DSP results.",
+        "status": bpm_source,
+        "error": "BPM read from description; install audio analysis dependencies for DSP confirmation."
+        if bpm_source == "described"
+        else "Estimated from metadata; install audio analysis dependencies for DSP results.",
     }
+
+
+def extract_described_bpm(text: str) -> float | None:
+    values: list[float] = []
+    patterns = [
+        r"\b(\d{2,3}(?:\.\d+)?)\s*bpm\b",
+        r"\bbpm\s*[:=]?\s*(\d{2,3}(?:\.\d+)?)\b",
+        r"\btempo\s*[:=]?\s*(\d{2,3}(?:\.\d+)?)\b",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            value = float(match.group(1))
+            if 45 <= value <= 220:
+                values.append(value)
+    if not values:
+        return None
+    fast_values = [value for value in values if value >= 90]
+    return round(max(fast_values or values), 1)
 
 
 def re_search_key(text: str) -> str | None:
