@@ -33,6 +33,19 @@ const PLAYLISTS = [
   { value: "keepers", label: "Keepers", detail: "S and A rated tracks" },
   { value: "unrated", label: "Review queue", detail: "Unrated tracks only" },
 ];
+const APP_VIEWS = [
+  { value: "now", label: "Now" },
+  { value: "library", label: "Library" },
+  { value: "edit", label: "Edit" },
+  { value: "performance", label: "Performance" },
+];
+const EDIT_TABS = [
+  { value: "identity", label: "Identity" },
+  { value: "metadata", label: "Metadata" },
+  { value: "lyrics", label: "Lyrics" },
+  { value: "notes", label: "Notes" },
+  { value: "playlists", label: "Playlists" },
+];
 const STOP_WORDS = new Set([
   "the",
   "and",
@@ -247,6 +260,8 @@ export default function MusicLibrary() {
   const [playlists, setPlaylists] = useState([]);
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [songSheetOpen, setSongSheetOpen] = useState(false);
+  const [activeView, setActiveView] = useState("now");
+  const [editTab, setEditTab] = useState("identity");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftMetadata, setDraftMetadata] = useState({});
   const [draftNote, setDraftNote] = useState("");
@@ -309,6 +324,18 @@ export default function MusicLibrary() {
 
   const activeTrackInPlaylist = Boolean(activePlaylist?.track_ids.includes(activeTrack?.id));
   const isAutoMode = playbackMode === "auto";
+  const activeTrackId = activeTrack?.id;
+  const activeTrackTitle = activeTrack?.display_title || "";
+  const activeTrackNote = activeTrack?.note || "";
+  const activeTrackDuration = activeTrack?.duration_seconds || 0;
+  const activeTrackSourcePlatform = activeTrack?.source_platform || "";
+  const activeTrackGenerationId = activeTrack?.source_generation_id || "";
+  const activeTrackCreationDate = activeTrack?.creation_date || "";
+  const activeTrackModel = activeTrack?.generation_model_version || "";
+  const activeTrackCoverUrl = activeTrack?.cover_art_url || "";
+  const activeTrackPrompt = activeTrack?.full_generation_prompt || "";
+  const activeTrackNegativePrompt = activeTrack?.negative_prompt || "";
+  const activeTrackLyrics = activeTrack?.lyrics || "";
 
   const activeIndex = useMemo(
     () => playbackQueue.findIndex((track) => track.id === activeTrack?.id),
@@ -458,21 +485,38 @@ export default function MusicLibrary() {
   }, [deckBTrack?.id, playbackRate, preservePitch]);
 
   useEffect(() => {
-    setDraftTitle(activeTrack?.display_title || "");
-    setDraftMetadata(
-      [...METADATA_FIELDS, ...METADATA_TEXT_FIELDS].reduce((metadata, field) => {
-        metadata[field.key] = activeTrack?.[field.key] || "";
-        return metadata;
-      }, {})
-    );
-    setDraftNote(activeTrack?.note || "");
+    setDraftTitle(activeTrackTitle);
+    setDraftMetadata({
+      source_platform: activeTrackSourcePlatform,
+      source_generation_id: activeTrackGenerationId,
+      creation_date: activeTrackCreationDate,
+      generation_model_version: activeTrackModel,
+      cover_art_url: activeTrackCoverUrl,
+      full_generation_prompt: activeTrackPrompt,
+      negative_prompt: activeTrackNegativePrompt,
+      lyrics: activeTrackLyrics,
+    });
+    setDraftNote(activeTrackNote);
     setLoopStart(null);
     setLoopEnd(null);
     setLoopActive(false);
     setCurrentTime(0);
-    setDuration(activeTrack?.duration_seconds || 0);
+    setDuration(activeTrackDuration);
     setWaveformBars([]);
-  }, [activeTrack]);
+  }, [
+    activeTrackDuration,
+    activeTrackCoverUrl,
+    activeTrackCreationDate,
+    activeTrackGenerationId,
+    activeTrackId,
+    activeTrackLyrics,
+    activeTrackModel,
+    activeTrackNegativePrompt,
+    activeTrackNote,
+    activeTrackPrompt,
+    activeTrackSourcePlatform,
+    activeTrackTitle,
+  ]);
 
   useEffect(() => {
     if (!activeTrack?.id) return;
@@ -603,6 +647,7 @@ export default function MusicLibrary() {
     pendingAutoplayRef.current = autoplay;
     setActiveId(trackId);
     setIsPlaying(autoplay);
+    setActiveView("now");
   }, []);
 
   const togglePlaybackMode = useCallback(() => {
@@ -1037,6 +1082,7 @@ export default function MusicLibrary() {
         }))
       );
       setActiveId(fallback);
+      setActiveView("now");
       setIsPlaying(false);
       setStatus(`Deleted ${deletedId}`);
       loadTracks().catch((error) => setStatus(error.message));
@@ -1214,7 +1260,7 @@ export default function MusicLibrary() {
   }, [activeTrack, goRelative, isAutoMode, seek, skipToNextLive, togglePlayback, updateActiveTrack]);
 
   return (
-    <main className={`music-workstation ${isAutoMode ? "auto-mode" : "manual-mode"} ${djToolsOpen ? "dj-open" : "dj-closed"}`}>
+    <main className={`music-workstation ${isAutoMode ? "auto-mode" : "manual-mode"} ${djToolsOpen ? "dj-open" : "dj-closed"} view-${activeView}`}>
       <section className="music-topbar">
         <div>
           <p className="music-kicker">Thismoment</p>
@@ -1228,7 +1274,26 @@ export default function MusicLibrary() {
         <div className="music-status">{status}</div>
       </section>
 
-      <section className="import-strip">
+      <nav className="view-tabs" aria-label="Music app views">
+        {APP_VIEWS.map((view) => (
+          <button
+            key={view.value}
+            className={activeView === view.value ? "selected" : ""}
+            onClick={() => {
+              setActiveView(view.value);
+              if (view.value === "performance") setDjToolsOpen(true);
+              if (view.value === "edit" && activeTrack) {
+                setSongSheetOpen(true);
+                setEditTab("identity");
+              }
+            }}
+          >
+            {view.label}
+          </button>
+        ))}
+      </nav>
+
+      <section className="import-strip system-strip">
         <label>
           Inbox folder
           <input value={inboxPath} onChange={(event) => setInboxPath(event.target.value)} />
@@ -1256,7 +1321,7 @@ export default function MusicLibrary() {
       )}
 
       <section className="music-grid">
-        <aside className="library-panel">
+        <aside className="library-panel app-panel panel-library">
           <div className="filters">
             <label className="search-field">
               <Search size={15} />
@@ -1309,7 +1374,7 @@ export default function MusicLibrary() {
           </div>
         </aside>
 
-        <section className="review-panel">
+        <section className="review-panel app-panel panel-now">
           {activeTrack ? (
             <>
               <div className="now-playing">
@@ -1322,12 +1387,26 @@ export default function MusicLibrary() {
                   <span className="track-id large">{activeTrack.id}</span>
                   <button
                     className="song-title-button"
-                    onClick={() => (isAutoMode ? setStatus("Switch to manual to edit") : setSongSheetOpen(true))}
+                    onClick={() => {
+                      if (isAutoMode) {
+                        setStatus("Switch to manual to edit");
+                        return;
+                      }
+                      setActiveView("edit");
+                      setEditTab("identity");
+                      setSongSheetOpen(true);
+                    }}
                     title={isAutoMode ? "Switch to manual to edit" : "Open song details"}
                   >
                     <h2>{activeTrack.display_title}</h2>
                   </button>
                   <p>{activeTrack.original_filename}</p>
+                  <div className="now-state-row">
+                    <span className={`status-chip ${isPlaying ? "live" : "ready"}`}>{isPlaying ? "Live" : "Ready"}</span>
+                    <span className={`status-chip ${isAutoMode ? "mixing" : "ready"}`}>{isAutoMode ? (shuffleMix ? "Shuffle radio" : smartMix ? "Smart radio" : "Auto radio") : "Manual"}</span>
+                    <span className="status-chip">{playlistMeta.label}</span>
+                    {keepAwake && <span className={`status-chip ${wakeLockActive ? "live" : "ready"}`}>Awake {wakeLockActive ? "on" : "ready"}</span>}
+                  </div>
                 </div>
                 <button
                   className={`favorite-button ${activeTrack.favorite ? "on" : ""}`}
@@ -1368,6 +1447,12 @@ export default function MusicLibrary() {
                 onTimeUpdate={handleTimeUpdate}
                 controls
               />
+
+              <div className="next-preview">
+                <span>Up next</span>
+                <strong>{suggestedDeckBTrack?.display_title || "No next track"}</strong>
+                <small>{suggestedDeckBTrack ? `${suggestedDeckBTrack.id} / ${formatDuration(suggestedDeckBTrack.duration_seconds)}` : "Pick a playlist or clear filters"}</small>
+              </div>
 
               {deckBTrack && (
                 <audio
@@ -1419,7 +1504,14 @@ export default function MusicLibrary() {
                 </label>
               </div>
 
-              <button className="dj-toggle" onClick={() => setDjToolsOpen((value) => !value)}>
+              <button
+                className="dj-toggle"
+                onClick={() => {
+                  const nextOpen = !djToolsOpen;
+                  setDjToolsOpen(nextOpen);
+                  if (nextOpen) setActiveView("performance");
+                }}
+              >
                 <SlidersHorizontal size={16} />
                 <span>{djToolsOpen ? "Hide DJ tools" : "Show DJ tools"}</span>
               </button>
@@ -1639,7 +1731,7 @@ export default function MusicLibrary() {
           )}
         </section>
 
-        <aside className="stats-panel">
+        <aside className="stats-panel app-panel panel-system">
           <h2>Playlists</h2>
           <div className="playlist-create">
             <input
@@ -1746,91 +1838,156 @@ export default function MusicLibrary() {
               </button>
             </div>
 
-            <label className="sheet-title">
-              Track name
-              <input
-                value={draftTitle}
-                onChange={(event) => setDraftTitle(event.target.value)}
-                onBlur={saveDraftTitle}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                }}
-                placeholder="Give this version its own name"
-              />
-            </label>
-            <button className="sheet-save" onClick={saveDraftTitle}>Save name</button>
+            <div className="sheet-tabs" role="tablist" aria-label="Song editor sections">
+              {EDIT_TABS.map((tab) => (
+                <button
+                  key={tab.value}
+                  className={editTab === tab.value ? "selected" : ""}
+                  onClick={() => setEditTab(tab.value)}
+                  role="tab"
+                  aria-selected={editTab === tab.value}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
 
-            <div className="sheet-metadata">
-              <strong>Metadata</strong>
-              <div className="sheet-metadata-grid">
-                {METADATA_FIELDS.map((field) => (
-                  <label key={field.key} className="sheet-field">
-                    {field.label}
-                    <input
-                      value={draftMetadata[field.key] || ""}
-                      onChange={(event) => setDraftMetadata((metadata) => ({ ...metadata, [field.key]: event.target.value }))}
-                    />
-                  </label>
-                ))}
-              </div>
-              {METADATA_TEXT_FIELDS.map((field) => (
-                <label key={field.key} className="sheet-field">
-                  {field.label}
-                  <textarea
-                    value={draftMetadata[field.key] || ""}
-                    onChange={(event) => setDraftMetadata((metadata) => ({ ...metadata, [field.key]: event.target.value }))}
-                    placeholder={field.placeholder}
+            {editTab === "identity" && (
+              <div className="sheet-section">
+                <label className="sheet-title">
+                  Track name
+                  <input
+                    value={draftTitle}
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                    onBlur={saveDraftTitle}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                    }}
+                    placeholder="Give this version its own name"
                   />
                 </label>
-              ))}
-              <button className="sheet-save" onClick={saveDraftMetadata}>Save metadata</button>
-            </div>
-
-            <label className="sheet-note">
-              Comment
-              <textarea
-                value={draftNote}
-                onChange={(event) => setDraftNote(event.target.value)}
-                onBlur={saveDraftNote}
-                placeholder="Drop notes here: live set moment, needs edit, insane hook..."
-              />
-            </label>
-            <button className="sheet-save" onClick={saveDraftNote}>Save comment</button>
-
-            <div className="sheet-playlists">
-              <strong>Add to playlist</strong>
-              <div className="sheet-playlist-create">
-                <input
-                  value={newPlaylistName}
-                  onChange={(event) => setNewPlaylistName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") createPlaylist(true);
-                  }}
-                  placeholder="New playlist"
-                />
-                <button onClick={() => createPlaylist(true)} disabled={busy || !newPlaylistName.trim()}>
-                  <Plus size={16} />
-                  Create + add
+                <button className="sheet-save" onClick={saveDraftTitle}>Save name</button>
+                <div className="rating-grid compact">
+                  {RATINGS.map((rating) => (
+                    <button
+                      key={rating.value}
+                      className={activeTrack.rating === rating.value ? "selected" : ""}
+                      onClick={() => updateActiveTrack({ rating: rating.value }).catch((error) => setStatus(error.message))}
+                    >
+                      <strong>{rating.value}</strong>
+                      <span>{rating.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className={`sheet-save ${activeTrack.favorite ? "selected" : ""}`}
+                  onClick={() => updateActiveTrack({ favorite: !activeTrack.favorite }).catch((error) => setStatus(error.message))}
+                >
+                  {activeTrack.favorite ? "Remove favorite" : "Mark favorite"}
                 </button>
               </div>
-              {playlists.length ? (
-                playlists.map((playlist) => {
-                  const included = playlist.track_ids.includes(activeTrack.id);
-                  return (
-                    <button
-                      key={playlist.id}
-                      className={included ? "included" : ""}
-                      onClick={() => (included ? removeTrackFromPlaylist(playlist) : addTrackToPlaylist(playlist))}
-                    >
-                      <span>{playlist.name}</span>
-                      <small>{included ? "Remove" : "Add"}</small>
-                    </button>
-                  );
-                })
-              ) : (
-                <p>Create a playlist above, then use this sheet to add songs.</p>
-              )}
-            </div>
+            )}
+
+            {editTab === "metadata" && (
+              <div className="sheet-metadata">
+                <strong>Generation Metadata</strong>
+                <div className="sheet-metadata-grid">
+                  {METADATA_FIELDS.map((field) => (
+                    <label key={field.key} className="sheet-field">
+                      {field.label}
+                      <input
+                        value={draftMetadata[field.key] || ""}
+                        onChange={(event) => setDraftMetadata((metadata) => ({ ...metadata, [field.key]: event.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <label className="sheet-field">
+                  Prompt
+                  <textarea
+                    value={draftMetadata.full_generation_prompt || ""}
+                    onChange={(event) => setDraftMetadata((metadata) => ({ ...metadata, full_generation_prompt: event.target.value }))}
+                    placeholder="Style, prompt, or generation notes..."
+                  />
+                </label>
+                <label className="sheet-field">
+                  Negative prompt
+                  <textarea
+                    value={draftMetadata.negative_prompt || ""}
+                    onChange={(event) => setDraftMetadata((metadata) => ({ ...metadata, negative_prompt: event.target.value }))}
+                    placeholder="Anything excluded from the generation..."
+                  />
+                </label>
+                <button className="sheet-save" onClick={saveDraftMetadata}>Save metadata</button>
+              </div>
+            )}
+
+            {editTab === "lyrics" && (
+              <div className="sheet-section">
+                <label className="sheet-field">
+                  Lyrics
+                  <textarea
+                    value={draftMetadata.lyrics || ""}
+                    onChange={(event) => setDraftMetadata((metadata) => ({ ...metadata, lyrics: event.target.value }))}
+                    placeholder="Lyrics or spoken-word text..."
+                  />
+                </label>
+                <button className="sheet-save" onClick={saveDraftMetadata}>Save lyrics</button>
+              </div>
+            )}
+
+            {editTab === "notes" && (
+              <div className="sheet-section">
+                <label className="sheet-note">
+                  Comment
+                  <textarea
+                    value={draftNote}
+                    onChange={(event) => setDraftNote(event.target.value)}
+                    onBlur={saveDraftNote}
+                    placeholder="Drop notes here: live set moment, needs edit, insane hook..."
+                  />
+                </label>
+                <button className="sheet-save" onClick={saveDraftNote}>Save comment</button>
+              </div>
+            )}
+
+            {editTab === "playlists" && (
+              <div className="sheet-playlists">
+                <strong>Add to playlist</strong>
+                <div className="sheet-playlist-create">
+                  <input
+                    value={newPlaylistName}
+                    onChange={(event) => setNewPlaylistName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") createPlaylist(true);
+                    }}
+                    placeholder="New playlist"
+                  />
+                  <button onClick={() => createPlaylist(true)} disabled={busy || !newPlaylistName.trim()}>
+                    <Plus size={16} />
+                    Create + add
+                  </button>
+                </div>
+                {playlists.length ? (
+                  playlists.map((playlist) => {
+                    const included = playlist.track_ids.includes(activeTrack.id);
+                    return (
+                      <button
+                        key={playlist.id}
+                        className={included ? "included" : ""}
+                        onClick={() => (included ? removeTrackFromPlaylist(playlist) : addTrackToPlaylist(playlist))}
+                      >
+                        <span>{playlist.name}</span>
+                        <small>{included ? "Remove" : "Add"}</small>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <p>Create a playlist above, then use this sheet to add songs.</p>
+                )}
+                <button className="danger-button sheet-save" onClick={deleteActiveTrack}>Delete song</button>
+              </div>
+            )}
           </div>
         </section>
       )}
