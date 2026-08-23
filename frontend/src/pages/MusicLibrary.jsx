@@ -2356,14 +2356,14 @@ function WaveformDeck({ track, bars: decodedBars, currentTime, duration, loopSta
     if (!duration || !interval) return [];
     const start = firstBeat(track);
     const markers = [];
-    for (let time = start; time <= duration && markers.length < 180; time += interval) {
-      if (time >= 0) {
-        const beatIndex = markers.length;
-        if (beatIndex % 4 === 0) markers.push({ time, bar: true });
-        else markers.push(null);
+    let beatIndex = 0;
+    for (let time = start; time <= duration && markers.length < 360; time += interval) {
+      if (time >= 0 && beatIndex % 4 === 0) {
+        markers.push({ time, bar: true });
       }
+      beatIndex += 1;
     }
-    return markers.filter(Boolean);
+    return markers;
   }, [duration, track]);
 
   return (
