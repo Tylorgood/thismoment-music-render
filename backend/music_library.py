@@ -255,6 +255,10 @@ class TrackUpdate(BaseModel):
     listened: Optional[bool] = None
     analysis_bpm: Optional[float] = Field(default=None, ge=45, le=220)
     analysis_key: Optional[str] = Field(default=None, max_length=24)
+    analysis_first_beat: Optional[float] = Field(default=None, ge=0, le=1200)
+    analysis_beat_interval: Optional[float] = Field(default=None, ge=0.25, le=2.0)
+    analysis_beat_confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    analysis_status: Optional[Literal["manual", "review"]] = None
 
 
 class PlaylistCreate(BaseModel):
@@ -866,7 +870,17 @@ def make_router(library: MusicLibrary) -> APIRouter:
         if payload.listened is not None:
             updates.append("listened = ?")
             params.append(1 if payload.listened else 0)
-        has_analysis_update = payload.analysis_bpm is not None or payload.analysis_key is not None
+        has_analysis_update = any(
+            value is not None
+            for value in (
+                payload.analysis_bpm,
+                payload.analysis_key,
+                payload.analysis_first_beat,
+                payload.analysis_beat_interval,
+                payload.analysis_beat_confidence,
+                payload.analysis_status,
+            )
+        )
         if not updates and not has_analysis_update:
             raise HTTPException(status_code=400, detail="No supported updates provided")
 
@@ -890,6 +904,13 @@ def make_router(library: MusicLibrary) -> APIRouter:
                     analysis["bpm"] = round(float(payload.analysis_bpm), 1)
                     analysis["beat_interval"] = round(60 / max(1, float(payload.analysis_bpm)), 4)
                     analysis["beat_confidence"] = max(float(analysis.get("beat_confidence") or 0), 0.9)
+                if payload.analysis_beat_interval is not None:
+                    analysis["beat_interval"] = round(float(payload.analysis_beat_interval), 4)
+                    analysis["bpm"] = round(60 / max(0.25, float(payload.analysis_beat_interval)), 1)
+                if payload.analysis_first_beat is not None:
+                    analysis["first_beat"] = round(float(payload.analysis_first_beat), 3)
+                if payload.analysis_beat_confidence is not None:
+                    analysis["beat_confidence"] = round(float(payload.analysis_beat_confidence), 2)
                 if payload.analysis_key is not None:
                     cleaned_key = payload.analysis_key.strip()
                     analysis["musical_key"] = cleaned_key or None
@@ -897,8 +918,8 @@ def make_router(library: MusicLibrary) -> APIRouter:
                 else:
                     analysis["musical_key"] = analysis.get("musical_key") or analysis.get("key")
                 analysis["track_id"] = track_id
-                analysis["status"] = "manual"
-                analysis["error"] = "Manually verified by user."
+                analysis["status"] = payload.analysis_status or "manual"
+                analysis["error"] = "Marked for beat-grid review." if analysis["status"] == "review" else "Manually verified by user."
                 analysis["analysis_version"] = ANALYSIS_VERSION
                 analysis["updated_at"] = utc_now()
                 save_track_analysis(conn, analysis)

@@ -439,6 +439,7 @@ export default function MusicLibrary() {
   const [draftTitle, setDraftTitle] = useState("");
   const [draftMetadata, setDraftMetadata] = useState({});
   const [draftAnalysis, setDraftAnalysis] = useState({ bpm: "", key: "" });
+  const [draftGrid, setDraftGrid] = useState({ firstBeat: "0", beatInterval: "", confidence: "", status: "" });
   const [draftNote, setDraftNote] = useState("");
   const [playbackMode, setPlaybackMode] = useState("manual");
   const [smartMix, setSmartMix] = useState(true);
@@ -698,6 +699,12 @@ export default function MusicLibrary() {
       bpm: activeTrack?.analysis?.bpm ? String(activeTrack.analysis.bpm) : "",
       key: activeTrack?.analysis?.key || "",
     });
+    setDraftGrid({
+      firstBeat: activeTrack?.analysis?.first_beat != null ? String(activeTrack.analysis.first_beat) : "0",
+      beatInterval: activeTrack?.analysis?.beat_interval ? String(activeTrack.analysis.beat_interval) : "",
+      confidence: activeTrack?.analysis?.beat_confidence != null ? String(activeTrack.analysis.beat_confidence) : "",
+      status: activeTrack?.analysis?.status || "",
+    });
     setDraftNote(activeTrackNote);
     setLoopStart(null);
     setLoopEnd(null);
@@ -720,6 +727,10 @@ export default function MusicLibrary() {
     activeTrackTitle,
     activeTrack?.analysis?.bpm,
     activeTrack?.analysis?.key,
+    activeTrack?.analysis?.beat_confidence,
+    activeTrack?.analysis?.beat_interval,
+    activeTrack?.analysis?.first_beat,
+    activeTrack?.analysis?.status,
   ]);
 
   useEffect(() => {
@@ -1248,6 +1259,91 @@ export default function MusicLibrary() {
       setStatus(error.message);
     }
   };
+
+  const applyGridPatch = useCallback(
+    async (patch, message = "Beat grid updated") => {
+      if (!activeTrack) return null;
+      try {
+        const updated = await updateActiveTrack(patch);
+        setDraftAnalysis({
+          bpm: updated.analysis?.bpm ? String(updated.analysis.bpm) : "",
+          key: updated.analysis?.key || "",
+        });
+        setDraftGrid({
+          firstBeat: updated.analysis?.first_beat != null ? String(updated.analysis.first_beat) : "0",
+          beatInterval: updated.analysis?.beat_interval ? String(updated.analysis.beat_interval) : "",
+          confidence: updated.analysis?.beat_confidence != null ? String(updated.analysis.beat_confidence) : "",
+          status: updated.analysis?.status || "",
+        });
+        setStatus(`${message}: ${updated.display_title}`);
+        return updated;
+      } catch (error) {
+        setStatus(error.message);
+        return null;
+      }
+    },
+    [activeTrack, updateActiveTrack]
+  );
+
+  const saveDraftGrid = useCallback(() => {
+    const firstBeatValue = Number(draftGrid.firstBeat);
+    const intervalValue = Number(draftGrid.beatInterval);
+    const confidenceValue = Number(draftGrid.confidence);
+    const patch = {};
+    if (Number.isFinite(firstBeatValue) && firstBeatValue >= 0) patch.analysis_first_beat = firstBeatValue;
+    if (Number.isFinite(intervalValue) && intervalValue > 0) patch.analysis_beat_interval = intervalValue;
+    if (Number.isFinite(confidenceValue)) patch.analysis_beat_confidence = Math.max(0, Math.min(1, confidenceValue));
+    patch.analysis_status = "manual";
+    return applyGridPatch(patch, "Locked beat grid");
+  }, [applyGridPatch, draftGrid]);
+
+  const setFirstBeatHere = useCallback(() => {
+    const liveAudio = getLiveAudio();
+    const firstBeatValue = liveAudio ? Number(liveAudio.currentTime || 0) : currentTime;
+    return applyGridPatch(
+      {
+        analysis_first_beat: Math.max(0, firstBeatValue),
+        analysis_beat_confidence: 0.92,
+        analysis_status: "manual",
+      },
+      "First beat set"
+    );
+  }, [applyGridPatch, currentTime, getLiveAudio]);
+
+  const shiftBeatGrid = useCallback(
+    (seconds) => {
+      const currentFirstBeat = Number(activeTrack?.analysis?.first_beat || draftGrid.firstBeat || 0);
+      return applyGridPatch(
+        {
+          analysis_first_beat: Math.max(0, currentFirstBeat + seconds),
+          analysis_beat_confidence: 0.9,
+          analysis_status: "manual",
+        },
+        `Grid shifted ${seconds > 0 ? "later" : "earlier"}`
+      );
+    },
+    [activeTrack?.analysis?.first_beat, applyGridPatch, draftGrid.firstBeat]
+  );
+
+  const scaleBeatGrid = useCallback(
+    (factor) => {
+      const currentInterval = Number(activeTrack?.analysis?.beat_interval || draftGrid.beatInterval || 0);
+      if (!currentInterval) return null;
+      return applyGridPatch(
+        {
+          analysis_beat_interval: currentInterval * factor,
+          analysis_beat_confidence: 0.9,
+          analysis_status: "manual",
+        },
+        factor > 1 ? "BPM halved" : "BPM doubled"
+      );
+    },
+    [activeTrack?.analysis?.beat_interval, applyGridPatch, draftGrid.beatInterval]
+  );
+
+  const markGridReview = useCallback(() => {
+    return applyGridPatch({ analysis_status: "review", analysis_beat_confidence: 0.2 }, "Marked for beat-grid review");
+  }, [applyGridPatch]);
 
   const createPlaylist = async (addCurrentTrack = false) => {
     const name = newPlaylistName.trim();
@@ -2280,6 +2376,41 @@ export default function MusicLibrary() {
                     </label>
                   </div>
                   <button className="sheet-save" onClick={saveDraftAnalysis}>Lock BPM/key</button>
+                  <div className="beat-grid-editor">
+                    <strong>Beat Grid Editor</strong>
+                    <div className="sheet-metadata-grid">
+                      <label className="sheet-field">
+                        First beat
+                        <input
+                          value={draftGrid.firstBeat}
+                          inputMode="decimal"
+                          onChange={(event) => setDraftGrid((grid) => ({ ...grid, firstBeat: event.target.value }))}
+                          onBlur={saveDraftGrid}
+                        />
+                      </label>
+                      <label className="sheet-field">
+                        Beat interval
+                        <input
+                          value={draftGrid.beatInterval}
+                          inputMode="decimal"
+                          onChange={(event) => setDraftGrid((grid) => ({ ...grid, beatInterval: event.target.value }))}
+                          onBlur={saveDraftGrid}
+                        />
+                      </label>
+                    </div>
+                    <div className="beat-grid-actions">
+                      <button onClick={setFirstBeatHere}>Set first beat here</button>
+                      <button onClick={() => shiftBeatGrid(-0.02)}>-20ms</button>
+                      <button onClick={() => shiftBeatGrid(0.02)}>+20ms</button>
+                      <button onClick={() => scaleBeatGrid(0.5)}>Double BPM</button>
+                      <button onClick={() => scaleBeatGrid(2)}>Half BPM</button>
+                      <button onClick={saveDraftGrid}>Lock grid</button>
+                      <button onClick={markGridReview}>Needs review</button>
+                    </div>
+                    <span className={`mix-trust ${beatConfidence(activeTrack) >= 0.58 ? "trusted" : "review"}`}>
+                      {mixTrustLabel(activeTrack)} / {draftGrid.status || "unknown"}
+                    </span>
+                  </div>
                   <button
                     className="sheet-save"
                     onClick={() => api(`/tracks/${activeTrack.id}/analysis?force=true`, { method: "POST" })
