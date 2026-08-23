@@ -2676,6 +2676,44 @@
   color: #f7d99b;
 }
 
+.engine-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.engine-deck {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.engine-deck strong {
+  color: var(--text-strong);
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.engine-deck label {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.engine-deck input {
+  width: 100%;
+  min-width: 0;
+}
+
 .music-workstation .song-sheet-panel {
   border-radius: 14px;
   background: #0d1018 !important;

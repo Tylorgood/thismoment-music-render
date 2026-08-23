@@ -17,6 +17,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import { createDjEngine } from "../audio/djEngine";
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL || "";
 const RATINGS = [
@@ -388,6 +389,10 @@ const METADATA_TEXT_FIELDS = [
   { key: "negative_prompt", label: "Negative prompt", placeholder: "Anything excluded from the generation..." },
   { key: "lyrics", label: "Lyrics", placeholder: "Lyrics or spoken-word text..." },
 ];
+const DEFAULT_DECK_CONTROLS = {
+  A: { low: 0, mid: 0, high: 0, filter: 0 },
+  B: { low: 0, mid: 0, high: 0, filter: 0 },
+};
 
 function readStoredJson(key, fallback) {
   if (typeof window === "undefined") return fallback;
@@ -408,9 +413,11 @@ export default function MusicLibrary() {
   const pendingAutoplayRef = useRef(false);
   const liveAudioRef = useRef(null);
   const audioContextRef = useRef(null);
+  const djEngineRef = useRef(null);
   const mediaGraphRef = useRef(new WeakMap());
   const wakeLockRef = useRef(null);
   const volumeRef = useRef(0.85);
+  const liveDeckRef = useRef("A");
   const recentTrackIdsRef = useRef([]);
   const lastLoggedPlayRef = useRef({ id: null, at: 0 });
   const [config, setConfig] = useState(null);
@@ -458,6 +465,7 @@ export default function MusicLibrary() {
   const [deckBId, setDeckBId] = useState(null);
   const [deckBPlaying, setDeckBPlaying] = useState(false);
   const [crossfader, setCrossfader] = useState(0);
+  const [deckControls, setDeckControls] = useState(DEFAULT_DECK_CONTROLS);
   const [duplicates, setDuplicates] = useState([]);
   const [playLog, setPlayLog] = useState(() => readStoredJson(PLAY_LOG_STORAGE_KEY, []));
   const [learnedPlays, setLearnedPlays] = useState(() => readStoredJson(PLAY_COUNTS_STORAGE_KEY, {}));
@@ -642,9 +650,11 @@ export default function MusicLibrary() {
 
   useEffect(() => {
     volumeRef.current = volume;
+    djEngineRef.current?.setCrossfader(crossfader);
+    djEngineRef.current?.setMasterVolume(volume);
     const liveAudio = liveAudioRef.current || audioRef.current;
     const liveGraph = liveAudio ? mediaGraphRef.current.get(liveAudio) : null;
-    if (liveGraph && audioContextRef.current && !isFading) {
+    if (liveGraph && !liveGraph.isEngine && audioContextRef.current && !isFading) {
       liveGraph.gain.gain.setTargetAtTime(volume, audioContextRef.current.currentTime, 0.025);
       liveAudio.volume = 1;
     }
@@ -765,11 +775,17 @@ export default function MusicLibrary() {
 
   const ensureAudioGraph = useCallback((audio, gainValue = volumeRef.current) => {
     if (!audio || typeof window === "undefined") return null;
+    if (!djEngineRef.current) djEngineRef.current = createDjEngine();
+    const deckId = audio.dataset.deckId || (audio === deckBRef.current || audio === incomingMixAudioRef.current ? "B" : "A");
+    const engineGraph = djEngineRef.current.connectElement(deckId, audio);
+    if (engineGraph?.context) {
+      audioContextRef.current = engineGraph.context;
+      djEngineRef.current.setTrim(deckId, 0);
+      return engineGraph;
+    }
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return null;
-    if (!audioContextRef.current) {
-      audioContextRef.current = new AudioContextClass();
-    }
+    if (!audioContextRef.current) audioContextRef.current = new AudioContextClass();
     const context = audioContextRef.current;
     let graph = mediaGraphRef.current.get(audio);
     if (!graph) {
@@ -839,6 +855,8 @@ export default function MusicLibrary() {
       incomingMixAudioRef.current = null;
     }
     pendingAutoplayRef.current = autoplay;
+    liveDeckRef.current = "A";
+    djEngineRef.current?.setCrossfader(0);
     setActiveId(trackId);
     setIsPlaying(autoplay);
     setActiveView("now");
@@ -949,6 +967,28 @@ export default function MusicLibrary() {
     deckBRef.current.currentTime = Math.max(0, deckBRef.current.currentTime + seconds);
   };
 
+  const updateDeckControl = useCallback((deckId, field, value) => {
+    const numericValue = Number(value);
+    setDeckControls((current) => {
+      const next = {
+        ...current,
+        [deckId]: { ...current[deckId], [field]: numericValue },
+      };
+      const engine = djEngineRef.current || createDjEngine();
+      djEngineRef.current = engine;
+      if (field === "filter") {
+        engine.setFilter(deckId, numericValue);
+      } else {
+        engine.setEq(deckId, {
+          low: next[deckId].low,
+          mid: next[deckId].mid,
+          high: next[deckId].high,
+        });
+      }
+      return next;
+    });
+  }, []);
+
   const fadeToNextTrack = useCallback((force = false) => {
     const outgoingAudio = getLiveAudio();
     if (!outgoingAudio || (!isAutoMode && !force) || !playbackQueue.length || fadeStartedRef.current) return;
@@ -965,10 +1005,13 @@ export default function MusicLibrary() {
     const fadeMs = Math.max(1, fadeSeconds) * 1000;
     let startedAt = Date.now();
     const originalVolume = volume;
+    const outgoingDeck = outgoingAudio.dataset.deckId || liveDeckRef.current || "A";
+    const incomingDeck = outgoingDeck === "A" ? "B" : "A";
     const incomingAudio = new Audio(`${API_BASE}/api/music/tracks/${nextTrack.id}/audio`);
     incomingMixAudioRef.current?.pause();
     incomingMixAudioRef.current = incomingAudio;
     incomingAudio.dataset.trackId = nextTrack.id;
+    incomingAudio.dataset.deckId = incomingDeck;
     incomingAudio.preload = "auto";
     const matchedRate = smartSync ? tempoMatchRate(activeTrack, nextTrack, playbackRate) : playbackRate;
     incomingAudio.volume = 1;
@@ -978,7 +1021,10 @@ export default function MusicLibrary() {
     incomingAudio.webkitPreservesPitch = preservePitch;
     setDeckBId(nextTrack.id);
     setDeckBPlaying(true);
-    setCrossfader(0);
+    const startCrossfader = outgoingDeck === "A" ? 0 : 1;
+    const endCrossfader = incomingDeck === "B" ? 1 : 0;
+    djEngineRef.current?.setCrossfader(startCrossfader);
+    setCrossfader(startCrossfader);
 
     if (fadeTimerRef.current) {
       window.clearInterval(fadeTimerRef.current);
@@ -998,27 +1044,20 @@ export default function MusicLibrary() {
       audioContext?.resume?.();
       incomingAudio.play().then(() => {
         startedAt = Date.now();
-        if (audioContext && outgoingGraph && incomingGraph) {
-          const now = audioContext.currentTime;
-          const fadeDuration = fadeMs / 1000;
-          outgoingGraph.gain.gain.cancelScheduledValues(now);
-          incomingGraph.gain.gain.cancelScheduledValues(now);
-          outgoingGraph.gain.gain.setValueAtTime(originalVolume, now);
-          incomingGraph.gain.gain.setValueAtTime(0, now);
-          outgoingGraph.gain.gain.linearRampToValueAtTime(0.0001, now + fadeDuration);
-          incomingGraph.gain.gain.linearRampToValueAtTime(originalVolume, now + fadeDuration);
-        }
+        djEngineRef.current?.setCrossfader(startCrossfader);
         recordPlay(nextTrack);
         if (smartSync && matchedRate !== playbackRate) {
           setStatus(`Smart sync: ${nextTrack.display_title} at ${Math.round(matchedRate * 100)}% speed`);
         }
         fadeTimerRef.current = window.setInterval(() => {
           const progress = Math.min(1, (Date.now() - startedAt) / fadeMs);
+          const nextCrossfader = startCrossfader + (endCrossfader - startCrossfader) * progress;
+          djEngineRef.current?.setCrossfader(nextCrossfader);
           if (!audioContext) {
             outgoingAudio.volume = Math.max(0, originalVolume * (1 - progress));
             incomingAudio.volume = Math.min(originalVolume, originalVolume * progress);
           }
-          setCrossfader(progress);
+          setCrossfader(nextCrossfader);
           setCurrentTime(incomingAudio.currentTime || 0);
           if (progress >= 1) {
             window.clearInterval(fadeTimerRef.current);
@@ -1026,10 +1065,8 @@ export default function MusicLibrary() {
             outgoingAudio.pause();
             if (!audioContext) outgoingAudio.volume = originalVolume;
             liveAudioRef.current = incomingAudio;
-            if (incomingGraph && audioContext) {
-              incomingGraph.gain.gain.cancelScheduledValues(audioContext.currentTime);
-              incomingGraph.gain.gain.setValueAtTime(originalVolume, audioContext.currentTime);
-            }
+            liveDeckRef.current = incomingDeck;
+            djEngineRef.current?.setCrossfader(endCrossfader);
             pendingAutoplayRef.current = false;
             setCurrentTime(incomingAudio.currentTime || 0);
             setActiveId(nextTrack.id);
@@ -1037,7 +1074,7 @@ export default function MusicLibrary() {
             setIsPlaying(true);
             setDeckBPlaying(false);
             setDeckBId(null);
-            setCrossfader(0);
+            setCrossfader(endCrossfader);
             setIsFading(false);
             fadeStartedRef.current = false;
           }
@@ -1685,6 +1722,7 @@ export default function MusicLibrary() {
 
               <audio
                 ref={audioRef}
+                data-deck-id="A"
                 src={`${API_BASE}/api/music/tracks/${activeTrack.id}/audio`}
                 onPlay={() => {
                   setIsPlaying(true);
@@ -1726,6 +1764,7 @@ export default function MusicLibrary() {
               {deckBTrack && (
                 <audio
                   ref={deckBRef}
+                  data-deck-id="B"
                   src={`${API_BASE}/api/music/tracks/${deckBTrack.id}/audio`}
                   onEnded={() => setDeckBPlaying(false)}
                   onLoadedMetadata={(event) => {
@@ -1819,6 +1858,37 @@ export default function MusicLibrary() {
                     <button onClick={() => seekDeckB(-10)} disabled={!deckBTrack}>B -10</button>
                     <button onClick={() => seekDeckB(10)} disabled={!deckBTrack}>B +10</button>
                     <button onClick={swapDeckBToA} disabled={!deckBTrack}>Make B live</button>
+                  </div>
+                  <div className="engine-controls">
+                    {["A", "B"].map((deckId) => (
+                      <div className="engine-deck" key={deckId}>
+                        <strong>Deck {deckId}</strong>
+                        {["low", "mid", "high"].map((band) => (
+                          <label key={band}>
+                            <span>{band}</span>
+                            <input
+                              type="range"
+                              min="-12"
+                              max="12"
+                              step="0.5"
+                              value={deckControls[deckId][band]}
+                              onChange={(event) => updateDeckControl(deckId, band, event.target.value)}
+                            />
+                          </label>
+                        ))}
+                        <label>
+                          <span>filter</span>
+                          <input
+                            type="range"
+                            min="-1"
+                            max="1"
+                            step="0.01"
+                            value={deckControls[deckId].filter}
+                            onChange={(event) => updateDeckControl(deckId, "filter", event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    ))}
                   </div>
                   <WaveformDeck
                     track={activeTrack}
