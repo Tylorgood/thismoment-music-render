@@ -154,6 +154,14 @@ function nextBeatDelayMs(track, currentTime, minLead = 0.18) {
   return Math.max(0, Math.min(900, (nextBeat - currentTime) * 1000));
 }
 
+function snapTimeToBeat(track, seconds) {
+  const interval = beatInterval(track);
+  if (!interval) return seconds;
+  const origin = firstBeat(track);
+  const beatIndex = Math.max(0, Math.round((seconds - origin) / interval));
+  return Math.max(0, origin + beatIndex * interval);
+}
+
 function tempoMatchRate(currentTrack, nextTrack, baseRate = 1) {
   const currentBpm = Number(currentTrack?.analysis?.bpm);
   const nextBpm = Number(nextTrack?.analysis?.bpm);
@@ -423,11 +431,13 @@ export default function MusicLibrary() {
   const [editTab, setEditTab] = useState("identity");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftMetadata, setDraftMetadata] = useState({});
+  const [draftAnalysis, setDraftAnalysis] = useState({ bpm: "", key: "" });
   const [draftNote, setDraftNote] = useState("");
   const [playbackMode, setPlaybackMode] = useState("manual");
   const [smartMix, setSmartMix] = useState(true);
   const [shuffleMix, setShuffleMix] = useState(false);
   const [smartSync, setSmartSync] = useState(true);
+  const [snapToBeat, setSnapToBeat] = useState(true);
   const [keepAwake, setKeepAwake] = useState(true);
   const [wakeLockActive, setWakeLockActive] = useState(false);
   const [jumpAround, setJumpAround] = useState(true);
@@ -674,6 +684,10 @@ export default function MusicLibrary() {
       negative_prompt: activeTrackNegativePrompt,
       lyrics: activeTrackLyrics,
     });
+    setDraftAnalysis({
+      bpm: activeTrack?.analysis?.bpm ? String(activeTrack.analysis.bpm) : "",
+      key: activeTrack?.analysis?.key || "",
+    });
     setDraftNote(activeTrackNote);
     setLoopStart(null);
     setLoopEnd(null);
@@ -694,6 +708,8 @@ export default function MusicLibrary() {
     activeTrackPrompt,
     activeTrackSourcePlatform,
     activeTrackTitle,
+    activeTrack?.analysis?.bpm,
+    activeTrack?.analysis?.key,
   ]);
 
   useEffect(() => {
@@ -1161,6 +1177,30 @@ export default function MusicLibrary() {
     }
   };
 
+  const saveDraftAnalysis = async () => {
+    if (!activeTrack) return;
+    const patch = {};
+    const bpmValue = Number(draftAnalysis.bpm);
+    if (draftAnalysis.bpm && Number.isFinite(bpmValue) && bpmValue > 0 && bpmValue !== Number(activeTrack.analysis?.bpm || 0)) {
+      patch.analysis_bpm = bpmValue;
+    }
+    const keyValue = (draftAnalysis.key || "").trim();
+    if (keyValue !== (activeTrack.analysis?.key || "")) {
+      patch.analysis_key = keyValue;
+    }
+    if (!Object.keys(patch).length) return;
+    try {
+      const updated = await updateActiveTrack(patch);
+      setDraftAnalysis({
+        bpm: updated.analysis?.bpm ? String(updated.analysis.bpm) : "",
+        key: updated.analysis?.key || "",
+      });
+      setStatus(`Locked DJ metadata for ${updated.display_title}`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  };
+
   const createPlaylist = async (addCurrentTrack = false) => {
     const name = newPlaylistName.trim();
     if (!name) return;
@@ -1307,17 +1347,36 @@ export default function MusicLibrary() {
 
   const seek = useCallback((seconds) => {
     const liveAudio = getLiveAudio();
-    if (!liveAudio) return;
-    liveAudio.currentTime = Math.max(0, liveAudio.currentTime + seconds);
-    setCurrentTime(liveAudio.currentTime || 0);
-  }, [getLiveAudio]);
+    if (!liveAudio || !activeTrack) return;
+    const runSeek = () => {
+      const target = Math.max(0, liveAudio.currentTime + seconds);
+      liveAudio.currentTime = snapToBeat ? snapTimeToBeat(activeTrack, target) : target;
+      setCurrentTime(liveAudio.currentTime || 0);
+    };
+    if (snapToBeat && !liveAudio.paused) {
+      setStatus("Snap armed: jumping on the next beat");
+      window.setTimeout(runSeek, nextBeatDelayMs(activeTrack, liveAudio.currentTime || 0, 0.05));
+    } else {
+      runSeek();
+    }
+  }, [activeTrack, getLiveAudio, snapToBeat]);
 
   const seekTo = useCallback((seconds) => {
     const liveAudio = getLiveAudio();
-    if (!liveAudio) return;
-    liveAudio.currentTime = Math.min(Math.max(0, seconds), duration || liveAudio.duration || 0);
-    setCurrentTime(liveAudio.currentTime || 0);
-  }, [duration, getLiveAudio]);
+    if (!liveAudio || !activeTrack) return;
+    const runSeek = () => {
+      const maxDuration = duration || liveAudio.duration || 0;
+      const target = Math.min(Math.max(0, seconds), maxDuration);
+      liveAudio.currentTime = snapToBeat ? snapTimeToBeat(activeTrack, target) : target;
+      setCurrentTime(liveAudio.currentTime || 0);
+    };
+    if (snapToBeat && !liveAudio.paused) {
+      setStatus("Snap armed: dropping on the next beat");
+      window.setTimeout(runSeek, nextBeatDelayMs(activeTrack, liveAudio.currentTime || 0, 0.05));
+    } else {
+      runSeek();
+    }
+  }, [activeTrack, duration, getLiveAudio, snapToBeat]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -1593,15 +1652,11 @@ export default function MusicLibrary() {
                   <button
                     className="song-title-button"
                     onClick={() => {
-                      if (isAutoMode) {
-                        setStatus("Switch to manual to edit");
-                        return;
-                      }
                       setActiveView("edit");
                       setEditTab("identity");
                       setSongSheetOpen(true);
                     }}
-                    title={isAutoMode ? "Switch to manual to edit" : "Open song details"}
+                    title="Open song details"
                   >
                     <h2>
                       <span>{activeTrack.display_title}</span>
@@ -1775,18 +1830,6 @@ export default function MusicLibrary() {
                     bookmarks={bookmarks[activeTrack.id] || []}
                     onSeek={seekTo}
                   />
-                  <div className="scrub-row">
-                    <span>{formatDuration(currentTime)}</span>
-                    <input
-                      type="range"
-                      min="0"
-                      max={duration || 0}
-                      step="0.1"
-                      value={Math.min(currentTime, duration || currentTime)}
-                      onChange={(event) => seekTo(Number(event.target.value))}
-                    />
-                    <span>{formatDuration(duration)}</span>
-                  </div>
                   <div className="jump-row">
                     <button onClick={() => seek(-30)}>-30</button>
                     <button onClick={() => seek(-10)}>-10</button>
@@ -1841,6 +1884,10 @@ export default function MusicLibrary() {
                   <label className="mix-toggle">
                     <input type="checkbox" checked={smartSync} onChange={(event) => setSmartSync(event.target.checked)} />
                     Smart sync
+                  </label>
+                  <label className="mix-toggle">
+                    <input type="checkbox" checked={snapToBeat} onChange={(event) => setSnapToBeat(event.target.checked)} />
+                    Snap to beat
                   </label>
                   <label className="mix-toggle">
                     <input
@@ -2040,7 +2087,7 @@ export default function MusicLibrary() {
         </aside>
       </section>
 
-      {songSheetOpen && activeTrack && !isAutoMode && (
+      {songSheetOpen && activeTrack && (
         <section className="song-sheet" role="dialog" aria-modal="true" aria-label="Song details">
           <button className="song-sheet-backdrop" onClick={() => setSongSheetOpen(false)} aria-label="Close song details" />
           <div className="song-sheet-panel">
@@ -2113,6 +2160,28 @@ export default function MusicLibrary() {
                 <div className="analysis-card">
                   <strong>Track Intelligence</strong>
                   <span>{analysisSummary(activeTrack)}</span>
+                  <div className="sheet-metadata-grid">
+                    <label className="sheet-field">
+                      BPM
+                      <input
+                        value={draftAnalysis.bpm}
+                        inputMode="decimal"
+                        onChange={(event) => setDraftAnalysis((analysis) => ({ ...analysis, bpm: event.target.value }))}
+                        onBlur={saveDraftAnalysis}
+                        placeholder="174"
+                      />
+                    </label>
+                    <label className="sheet-field">
+                      Key
+                      <input
+                        value={draftAnalysis.key}
+                        onChange={(event) => setDraftAnalysis((analysis) => ({ ...analysis, key: event.target.value }))}
+                        onBlur={saveDraftAnalysis}
+                        placeholder="A minor"
+                      />
+                    </label>
+                  </div>
+                  <button className="sheet-save" onClick={saveDraftAnalysis}>Lock BPM/key</button>
                   <button
                     className="sheet-save"
                     onClick={() => api(`/tracks/${activeTrack.id}/analysis?force=true`, { method: "POST" })

@@ -253,6 +253,8 @@ class TrackUpdate(BaseModel):
     favorite: Optional[bool] = None
     note: Optional[str] = None
     listened: Optional[bool] = None
+    analysis_bpm: Optional[float] = Field(default=None, ge=45, le=220)
+    analysis_key: Optional[str] = Field(default=None, max_length=24)
 
 
 class PlaylistCreate(BaseModel):
@@ -777,7 +779,7 @@ def make_router(library: MusicLibrary) -> APIRouter:
         with library.connect() as conn:
             track = get_track(conn, track_id)
             existing = conn.execute("SELECT * FROM track_analysis WHERE track_id = ?", (track_id,)).fetchone()
-            if existing and not force and existing["status"] in {"described", "estimated", "complete"}:
+            if existing and not force and existing["status"] in {"manual", "described", "estimated", "complete"}:
                 return {"track_id": track_id, "analysis": analysis_to_dict(existing), "cached": True}
             analysis = analyze_track(library, track, use_audio=True)
             save_track_analysis(conn, analysis)
@@ -790,13 +792,13 @@ def make_router(library: MusicLibrary) -> APIRouter:
         analyzed: list[dict[str, Any]] = []
         skipped = 0
         if payload.force and payload.mode == "metadata":
-            analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status != 'complete' OR track_analysis.beat_interval IS NULL"
+            analysis_where = "track_analysis.track_id IS NULL OR (track_analysis.status NOT IN ('manual', 'complete') OR track_analysis.beat_interval IS NULL)"
         elif payload.force:
             analysis_where = "1 = 1"
         elif payload.mode == "audio":
             analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status IN ('error', 'estimated')"
         else:
-            analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status = 'error' OR track_analysis.beat_interval IS NULL"
+            analysis_where = "track_analysis.track_id IS NULL OR track_analysis.status = 'error' OR (track_analysis.beat_interval IS NULL AND track_analysis.status != 'manual')"
         effective_limit = min(payload.limit, 5) if payload.mode == "audio" else payload.limit
         with library.connect() as conn:
             rows = conn.execute(
@@ -864,22 +866,52 @@ def make_router(library: MusicLibrary) -> APIRouter:
         if payload.listened is not None:
             updates.append("listened = ?")
             params.append(1 if payload.listened else 0)
-        if not updates:
+        has_analysis_update = payload.analysis_bpm is not None or payload.analysis_key is not None
+        if not updates and not has_analysis_update:
             raise HTTPException(status_code=400, detail="No supported updates provided")
 
-        updates.append("updated_at = ?")
-        params.append(utc_now())
-        params.append(track_id)
-
         with library.connect() as conn:
-            get_track(conn, track_id)
-            conn.execute(f"UPDATE tracks SET {', '.join(updates)} WHERE id = ?", params)
+            track = get_track(conn, track_id)
+            if updates:
+                updates.append("updated_at = ?")
+                params.append(utc_now())
+                params.append(track_id)
+                conn.execute(f"UPDATE tracks SET {', '.join(updates)} WHERE id = ?", params)
             if payload.note:
                 conn.execute(
                     "INSERT INTO notes (track_id, body, created_at) VALUES (?, ?, ?)",
                     (track_id, payload.note[:1000], utc_now()),
                 )
-            return track_to_dict(get_track(conn, track_id))
+            if has_analysis_update:
+                existing = conn.execute("SELECT * FROM track_analysis WHERE track_id = ?", (track_id,)).fetchone()
+                analysis = analysis_to_dict(existing) if existing else estimate_track_from_metadata(track)
+                analysis = analysis or {}
+                if payload.analysis_bpm is not None:
+                    analysis["bpm"] = round(float(payload.analysis_bpm), 1)
+                    analysis["beat_interval"] = round(60 / max(1, float(payload.analysis_bpm)), 4)
+                    analysis["beat_confidence"] = max(float(analysis.get("beat_confidence") or 0), 0.9)
+                if payload.analysis_key is not None:
+                    cleaned_key = payload.analysis_key.strip()
+                    analysis["musical_key"] = cleaned_key or None
+                    analysis["key"] = cleaned_key or None
+                else:
+                    analysis["musical_key"] = analysis.get("musical_key") or analysis.get("key")
+                analysis["track_id"] = track_id
+                analysis["status"] = "manual"
+                analysis["error"] = "Manually verified by user."
+                analysis["analysis_version"] = ANALYSIS_VERSION
+                analysis["updated_at"] = utc_now()
+                save_track_analysis(conn, analysis)
+            row = conn.execute(
+                f"""
+                SELECT tracks.*, {analysis_select_columns()}
+                FROM tracks
+                LEFT JOIN track_analysis ON track_analysis.track_id = tracks.id
+                WHERE tracks.id = ?
+                """,
+                (track_id,),
+            ).fetchone()
+            return track_to_dict(row)
 
     @router.delete("/tracks/{track_id}")
     async def delete_track(track_id: str) -> dict[str, Any]:
