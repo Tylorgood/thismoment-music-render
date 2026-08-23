@@ -2357,9 +2357,13 @@ function WaveformDeck({ track, bars: decodedBars, currentTime, duration, loopSta
     const start = firstBeat(track);
     const markers = [];
     for (let time = start; time <= duration && markers.length < 180; time += interval) {
-      if (time >= 0) markers.push({ time, bar: markers.length % 4 === 0 });
+      if (time >= 0) {
+        const beatIndex = markers.length;
+        if (beatIndex % 4 === 0) markers.push({ time, bar: true });
+        else markers.push(null);
+      }
     }
-    return markers;
+    return markers.filter(Boolean);
   }, [duration, track]);
 
   return (
@@ -2372,11 +2376,10 @@ function WaveformDeck({ track, bars: decodedBars, currentTime, duration, loopSta
       }}
       title="Tap waveform to jump"
     >
-      <span className={`beat-grid ${beatConfidence(track) >= 0.58 ? "trusted" : "review"}`} />
       {beatMarkers.map((marker, index) => (
         <span
           key={`${track?.id || "track"}-beat-${index}`}
-          className={`beat-marker ${marker.bar ? "bar" : ""}`}
+          className="beat-marker bar"
           style={{ left: `${duration ? (marker.time / duration) * 100 : 0}%` }}
         />
       ))}

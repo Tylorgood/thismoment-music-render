@@ -2607,31 +2607,29 @@
   background: #090b11;
 }
 
-.beat-grid {
-  opacity: 0.16;
-}
-
-.beat-grid.trusted {
-  opacity: 0.18;
-}
-
-.beat-grid.review {
-  opacity: 0.08;
-}
-
 .beat-marker {
   position: absolute;
-  top: 8px;
-  bottom: 8px;
+  top: 12px;
+  bottom: 12px;
   z-index: 1;
   width: 1px;
-  background: rgba(143, 214, 193, 0.32);
+  background: rgba(143, 214, 193, 0.16);
   pointer-events: none;
 }
 
 .beat-marker.bar {
-  width: 2px;
-  background: rgba(242, 193, 95, 0.62);
+  width: 1px;
+  background: rgba(242, 193, 95, 0.28);
+}
+
+.wave-bars {
+  z-index: 2;
+}
+
+.cue-marker,
+.playhead,
+.loop-region {
+  z-index: 3;
 }
 
 .wave-bar {
