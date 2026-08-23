@@ -1095,8 +1095,19 @@ export default function MusicLibrary() {
     };
 
     const startOnBeat = () => {
-      const delayMs = smartSync ? nextBeatDelayMs(activeTrack, outgoingAudio.currentTime || 0) : 0;
-      window.setTimeout(startOverlap, delayMs);
+      if (smartSync) {
+        const engine = djEngineRef.current || createDjEngine();
+        djEngineRef.current = engine;
+        engine.armAction({
+          track: activeTrack,
+          currentTime: outgoingAudio.currentTime || 0,
+          minLead: 0.18,
+          quantize: "beat",
+          action: startOverlap,
+        });
+        return;
+      }
+      startOverlap();
     };
 
     if (incomingAudio.readyState >= 2) {
@@ -1391,8 +1402,16 @@ export default function MusicLibrary() {
       setCurrentTime(liveAudio.currentTime || 0);
     };
     if (snapToBeat && !liveAudio.paused) {
-      setStatus("Snap armed: jumping on the next beat");
-      window.setTimeout(runSeek, nextBeatDelayMs(activeTrack, liveAudio.currentTime || 0, 0.05));
+      const engine = djEngineRef.current || createDjEngine();
+      djEngineRef.current = engine;
+      const armed = engine.armAction({
+        track: activeTrack,
+        currentTime: liveAudio.currentTime || 0,
+        minLead: 0.05,
+        quantize: "beat",
+        action: runSeek,
+      });
+      setStatus(`Snap armed: jump in ${Math.round(armed.delayMs)}ms`);
     } else {
       runSeek();
     }
@@ -1408,8 +1427,16 @@ export default function MusicLibrary() {
       setCurrentTime(liveAudio.currentTime || 0);
     };
     if (snapToBeat && !liveAudio.paused) {
-      setStatus("Snap armed: dropping on the next beat");
-      window.setTimeout(runSeek, nextBeatDelayMs(activeTrack, liveAudio.currentTime || 0, 0.05));
+      const engine = djEngineRef.current || createDjEngine();
+      djEngineRef.current = engine;
+      const armed = engine.armAction({
+        track: activeTrack,
+        currentTime: liveAudio.currentTime || 0,
+        minLead: 0.05,
+        quantize: "beat",
+        action: runSeek,
+      });
+      setStatus(`Snap armed: drop in ${Math.round(armed.delayMs)}ms`);
     } else {
       runSeek();
     }
@@ -1998,6 +2025,7 @@ export default function MusicLibrary() {
                     <span>{fadeSeconds}s</span>
                   </label>
                   {isFading && <span className="mix-live">Mixing</span>}
+                  <span className="mix-trust trusted">Limiter on</span>
                   <span className={`mix-trust ${beatConfidence(activeTrack) >= 0.58 ? "trusted" : "review"}`}>
                     {mixTrustLabel(activeTrack)}
                   </span>

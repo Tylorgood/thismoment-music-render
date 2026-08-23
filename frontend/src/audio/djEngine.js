@@ -21,7 +21,10 @@ function equalPower(value) {
 export function createDjEngine() {
   let context = null;
   let master = null;
+  let limiter = null;
   let crossfader = 0;
+  let actionCounter = 0;
+  const pendingActions = new Map();
   const decks = new Map();
 
   const ensureContext = () => {
@@ -29,7 +32,13 @@ export function createDjEngine() {
     if (context && !master) {
       master = context.createGain();
       master.gain.value = 1;
-      master.connect(context.destination);
+      limiter = context.createDynamicsCompressor();
+      limiter.threshold.value = -4;
+      limiter.knee.value = 4;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.18;
+      master.connect(limiter).connect(context.destination);
     }
     return context;
   };
@@ -144,28 +153,72 @@ export function createDjEngine() {
     master.gain.setTargetAtTime(Math.max(0, Math.min(1, Number(value) || 0)), audioContext.currentTime, 0.025);
   };
 
-  const scheduleAtNextBeat = (track, currentTime, callback, minLead = 0.08) => {
-    const interval = Number(track?.analysis?.beat_interval) || (track?.analysis?.bpm ? 60 / Number(track.analysis.bpm) : 0);
+  const beatInterval = (track) => Number(track?.analysis?.beat_interval) || (track?.analysis?.bpm ? 60 / Number(track.analysis.bpm) : 0);
+
+  const nextBeatDelayMs = (track, currentTime, minLead = 0.08, quantize = "beat") => {
+    const interval = beatInterval(track);
     if (!interval) {
+      return 0;
+    }
+    const multiplier = quantize === "bar" ? 4 : 1;
+    const origin = Number(track?.analysis?.first_beat) || 0;
+    const target = Math.max((Number(currentTime) || 0) + minLead, origin);
+    const gridInterval = interval * multiplier;
+    const beatIndex = Math.ceil((target - origin) / gridInterval);
+    return Math.max(0, Math.min(2000, (origin + Math.max(0, beatIndex) * gridInterval - (Number(currentTime) || 0)) * 1000));
+  };
+
+  const scheduleAtNextBeat = (track, currentTime, callback, minLead = 0.08, quantize = "beat") => {
+    const delayMs = nextBeatDelayMs(track, currentTime, minLead, quantize);
+    if (!delayMs) {
       callback();
       return 0;
     }
-    const origin = Number(track?.analysis?.first_beat) || 0;
-    const target = Math.max((Number(currentTime) || 0) + minLead, origin);
-    const beatIndex = Math.ceil((target - origin) / interval);
-    const delayMs = Math.max(0, Math.min(1200, (origin + Math.max(0, beatIndex) * interval - (Number(currentTime) || 0)) * 1000));
     window.setTimeout(callback, delayMs);
     return delayMs;
   };
 
+  const armAction = ({ track, currentTime = 0, quantize = "beat", minLead = 0.08, action }) => {
+    const id = `action-${actionCounter += 1}`;
+    const delayMs = nextBeatDelayMs(track, currentTime, minLead, quantize);
+    const run = () => {
+      pendingActions.delete(id);
+      action?.();
+    };
+    const timeoutId = window.setTimeout(run, delayMs);
+    pendingActions.set(id, { timeoutId, quantize, createdAt: Date.now() });
+    return { id, delayMs };
+  };
+
+  const cancelAction = (id) => {
+    const item = pendingActions.get(id);
+    if (!item) return false;
+    window.clearTimeout(item.timeoutId);
+    pendingActions.delete(id);
+    return true;
+  };
+
+  const setLimiter = ({ threshold = -4, ratio = 12, release = 0.18 } = {}) => {
+    const audioContext = ensureContext();
+    if (!audioContext || !limiter) return;
+    const now = audioContext.currentTime;
+    limiter.threshold.setTargetAtTime(Number(threshold), now, 0.025);
+    limiter.ratio.setTargetAtTime(Number(ratio), now, 0.025);
+    limiter.release.setTargetAtTime(Number(release), now, 0.025);
+  };
+
   return {
+    armAction,
+    cancelAction,
     connectElement,
     ensureContext,
+    nextBeatDelayMs,
     resume: () => ensureContext()?.resume?.(),
     scheduleAtNextBeat,
     setCrossfader,
     setEq,
     setFilter,
+    setLimiter,
     setMasterVolume,
     setTrim,
   };
