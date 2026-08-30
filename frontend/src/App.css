@@ -2268,7 +2268,7 @@
   .view-edit .dj-controls,
   .view-edit .mix-controls,
   .view-edit .description-panel,
-  .view-edit .rating-grid,
+  .view-edit .panel-now > .rating-grid,
   .view-edit .note-field,
   .view-edit .metadata-line {
     display: none;
@@ -2276,6 +2276,11 @@
 
   .view-edit .panel-now {
     min-height: auto;
+  }
+
+  .view-edit .song-sheet .rating-grid,
+  .view-edit .song-sheet .rating-grid.compact {
+    display: grid;
   }
 
   .sheet-tabs {
