@@ -2946,3 +2946,71 @@
     padding-top: 18px;
   }
 }
+
+.music-workstation .transport button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  text-align: center;
+}
+
+.music-workstation .transport button svg {
+  display: block;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.music-workstation.view-now .transport {
+  place-content: center;
+  place-items: center;
+}
+
+.music-workstation.view-now .transport button,
+.music-workstation.view-now .play-button {
+  padding: 0 !important;
+}
+
+.quick-playlists {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 2px 0 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.quick-playlists button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 34px;
+  max-width: 180px;
+  padding: 0 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: #111620;
+  color: var(--text-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.quick-playlists button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-playlists button.selected {
+  border-color: rgba(139, 92, 246, 0.42);
+  background: rgba(139, 92, 246, 0.16);
+}
+
+.quick-playlists .quick-create {
+  width: 34px;
+  padding: 0;
+}

@@ -495,6 +495,18 @@ export default function MusicLibrary() {
     [playlistMode, playlists]
   );
 
+  const quickPlaylistOptions = useMemo(
+    () => [
+      ...PLAYLISTS.slice(0, 4),
+      ...playlists.slice(0, 8).map((playlist) => ({
+        value: `playlist:${playlist.id}`,
+        label: playlist.name,
+        detail: `${playlist.track_count} tracks`,
+      })),
+    ],
+    [playlists]
+  );
+
   const activePlaylist = useMemo(() => {
     if (!playlistMode.startsWith("playlist:")) return null;
     const playlistId = Number(playlistMode.replace("playlist:", ""));
@@ -1149,13 +1161,13 @@ export default function MusicLibrary() {
       audio.currentTime = loopStart;
       return;
     }
-    if (!isAutoMode || (!smartMix && !shuffleMix) || fadeStartedRef.current) return;
+    if (!isAutoMode || fadeStartedRef.current) return;
     if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
     const remaining = audio.duration - audio.currentTime;
-    if (remaining > 0 && remaining <= Math.max(1, fadeSeconds)) {
+    if (remaining > 0 && remaining <= Math.max(1, fadeSeconds + 1.25)) {
       fadeToNextTrack();
     }
-  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart, shuffleMix, smartMix]);
+  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1169,15 +1181,15 @@ export default function MusicLibrary() {
         audio.currentTime = loopStart;
         return;
       }
-      if (!isAutoMode || (!smartMix && !shuffleMix) || fadeStartedRef.current) return;
+      if (!isAutoMode || fadeStartedRef.current) return;
       if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
       const remaining = audio.duration - audio.currentTime;
-      if (remaining > 0 && remaining <= Math.max(1, fadeSeconds)) {
+      if (remaining > 0 && remaining <= Math.max(1, fadeSeconds + 1.25)) {
         fadeToNextTrack();
       }
     }, 180);
     return () => window.clearInterval(timer);
-  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart, shuffleMix, smartMix]);
+  }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart]);
 
   const updateActiveTrack = useCallback(
     async (patch, advance = false) => {
@@ -1866,7 +1878,7 @@ export default function MusicLibrary() {
                   if (isFading) return;
                   if (isAutoMode) {
                     fadeStartedRef.current = false;
-                    goRelative(1, true);
+                    fadeToNextTrack(true);
                   } else {
                     setIsPlaying(false);
                   }
@@ -1933,6 +1945,32 @@ export default function MusicLibrary() {
                     onChange={(event) => setVolume(Number(event.target.value))}
                   />
                 </label>
+              </div>
+
+              <div className="quick-playlists" aria-label="Quick playlist selection">
+                {quickPlaylistOptions.map((playlist) => (
+                  <button
+                    key={playlist.value}
+                    className={playlistMode === playlist.value ? "selected" : ""}
+                    onClick={() => {
+                      setPlaylistMode(playlist.value);
+                      setStatus(`${playlist.label} queue ready`);
+                    }}
+                  >
+                    <span>{playlist.label}</span>
+                  </button>
+                ))}
+                <button
+                  className="quick-create"
+                  onClick={() => {
+                    setActiveView("edit");
+                    setEditTab("playlists");
+                    setSongSheetOpen(true);
+                  }}
+                  title="Create or edit playlists"
+                >
+                  <Plus size={15} />
+                </button>
               </div>
 
               <button
