@@ -64,6 +64,9 @@ const STOP_WORDS = new Set([
   "instrumental",
 ]);
 const RATING_ENERGY = { S: 5, A: 4, B: 3, C: 2, D: 1 };
+const AUTO_CROSSFADE_ARM_LEAD_SECONDS = 3.25;
+const OUTGOING_END_GUARD_SECONDS = 0.35;
+const MIN_LATE_CROSSFADE_MS = 700;
 
 function formatDuration(seconds) {
   if (!seconds) return "--:--";
@@ -1026,6 +1029,7 @@ export default function MusicLibrary() {
     setIsFading(true);
     setStatus(`Mixing into ${nextTrack.display_title}`);
     const fadeMs = Math.max(1, fadeSeconds) * 1000;
+    let activeFadeMs = fadeMs;
     let startedAt = Date.now();
     const originalVolume = volume;
     const outgoingDeck = outgoingAudio.dataset.deckId || liveDeckRef.current || "A";
@@ -1067,13 +1071,18 @@ export default function MusicLibrary() {
       audioContext?.resume?.();
       incomingAudio.play().then(() => {
         startedAt = Date.now();
+        const outgoingDuration = Number(outgoingAudio.duration);
+        const outgoingRemaining = outgoingDuration - (Number(outgoingAudio.currentTime) || 0);
+        activeFadeMs = Number.isFinite(outgoingRemaining) && outgoingRemaining > OUTGOING_END_GUARD_SECONDS
+          ? Math.max(MIN_LATE_CROSSFADE_MS, Math.min(fadeMs, (outgoingRemaining - OUTGOING_END_GUARD_SECONDS) * 1000))
+          : MIN_LATE_CROSSFADE_MS;
         djEngineRef.current?.setCrossfader(startCrossfader);
         recordPlay(nextTrack);
         if (smartSync && matchedRate !== playbackRate) {
           setStatus(`Smart sync: ${nextTrack.display_title} at ${Math.round(matchedRate * 100)}% speed`);
         }
         fadeTimerRef.current = window.setInterval(() => {
-          const progress = Math.min(1, (Date.now() - startedAt) / fadeMs);
+          const progress = Math.min(1, (Date.now() - startedAt) / activeFadeMs);
           const nextCrossfader = startCrossfader + (endCrossfader - startCrossfader) * progress;
           djEngineRef.current?.setCrossfader(nextCrossfader);
           if (!audioContext) {
@@ -1164,7 +1173,7 @@ export default function MusicLibrary() {
     if (!isAutoMode || fadeStartedRef.current) return;
     if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
     const remaining = audio.duration - audio.currentTime;
-    if (remaining > 0 && remaining <= Math.max(1, fadeSeconds + 1.25)) {
+    if (remaining > 0 && remaining <= Math.max(1, fadeSeconds + AUTO_CROSSFADE_ARM_LEAD_SECONDS)) {
       fadeToNextTrack();
     }
   }, [fadeSeconds, fadeToNextTrack, getLiveAudio, isAutoMode, loopActive, loopEnd, loopStart]);
@@ -1184,7 +1193,7 @@ export default function MusicLibrary() {
       if (!isAutoMode || fadeStartedRef.current) return;
       if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
       const remaining = audio.duration - audio.currentTime;
-      if (remaining > 0 && remaining <= Math.max(1, fadeSeconds + 1.25)) {
+      if (remaining > 0 && remaining <= Math.max(1, fadeSeconds + AUTO_CROSSFADE_ARM_LEAD_SECONDS)) {
         fadeToNextTrack();
       }
     }, 180);
