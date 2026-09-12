@@ -23,6 +23,7 @@ export function createDjEngine() {
   let master = null;
   let limiter = null;
   let crossfader = 0;
+  let scheduledFade = null;
   let actionCounter = 0;
   const pendingActions = new Map();
   const decks = new Map();
@@ -108,8 +109,45 @@ export function createDjEngine() {
   };
 
   const setCrossfader = (value) => {
+    scheduledFade = null;
+    for (const deck of decks.values()) {
+      deck.output.gain.cancelScheduledValues(context.currentTime);
+    }
     crossfader = Math.max(0, Math.min(1, Number(value) || 0));
     updateCrossfader();
+  };
+
+  const scheduleCrossfade = (from, to, seconds) => {
+    const audioContext = ensureContext();
+    if (!audioContext) return null;
+    ensureDeck("A");
+    ensureDeck("B");
+    const start = Math.max(0, Math.min(1, from));
+    const end = Math.max(0, Math.min(1, to));
+    const duration = Math.max(0.01, seconds);
+    const startedAt = audioContext.currentTime;
+    scheduledFade = { start, end, duration, startedAt };
+    for (const [id, deck] of decks) {
+      const curve = Float32Array.from({ length: 129 }, (_, i) => {
+        const gains = equalPower(start + (end - start) * i / 128);
+        return id === "A" ? gains.a : gains.b;
+      });
+      const gain = deck.output.gain;
+      gain.cancelScheduledValues(startedAt);
+      gain.setValueAtTime(curve[0], startedAt);
+      gain.setValueCurveAtTime(curve, startedAt, duration);
+    }
+    // UI timers observe this clock; they never drive the audible gain curve.
+    return {
+      progress: () => Math.max(0, Math.min(1, (audioContext.currentTime - startedAt) / duration)),
+    };
+  };
+
+  const cancelCrossfade = () => {
+    if (!scheduledFade) return;
+    const { start, end, duration, startedAt } = scheduledFade;
+    const progress = Math.max(0, Math.min(1, (context.currentTime - startedAt) / duration));
+    setCrossfader(start + (end - start) * progress);
   };
 
   const setEq = (deckId, eq = DEFAULT_EQ) => {
@@ -210,11 +248,13 @@ export function createDjEngine() {
   return {
     armAction,
     cancelAction,
+    cancelCrossfade,
     connectElement,
     ensureContext,
     nextBeatDelayMs,
     resume: () => ensureContext()?.resume?.(),
     scheduleAtNextBeat,
+    scheduleCrossfade,
     setCrossfader,
     setEq,
     setFilter,
