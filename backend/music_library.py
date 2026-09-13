@@ -185,6 +185,35 @@ class MusicLibrary:
                     analysis_version TEXT NOT NULL DEFAULT 'analysis-v1',
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS album_projects (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    engine_version TEXT NOT NULL,
+                    inputs_json TEXT NOT NULL,
+                    blueprint_json TEXT NOT NULL,
+                    approval_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_album_projects_updated ON album_projects(updated_at);
+
+                CREATE TABLE IF NOT EXISTS album_project_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL REFERENCES album_projects(id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL,
+                    label TEXT NOT NULL DEFAULT '',
+                    snapshot_name TEXT NOT NULL,
+                    inputs_json TEXT NOT NULL,
+                    blueprint_json TEXT NOT NULL,
+                    approval_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    UNIQUE (project_id, version)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_album_versions_project ON album_project_versions(project_id, version);
                 """
             )
             ensure_column(conn, "tracks", "cover_art_url", "TEXT")

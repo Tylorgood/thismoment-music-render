@@ -17,6 +17,11 @@ import { createProjectVocabulary } from "./titleVocabulary";
 import { profileToGenome, buildFullChemistryArc, composeChemistry } from "./albumChemistry";
 import { buildTempoTrajectory } from "./albumTempo";
 
+// Bumped whenever the prompt/arc/bible generation changes. Persisted projects
+// resolve through their own stored blueprint, so older snapshots stay stable;
+// a mismatch surfaces an upgrade banner instead of silently rerolling.
+export const ALBUM_ENGINE_VERSION = "album-engine-v2.6";
+
 const ROLE_SUFFIX_POOLS = {
   opener: ["First Light", "Second Dawn", "Open Sky", "Warm Center"],
   body: ["Deep Room", "Inner Lane", "Velvet Cut", "Gold Room"],
@@ -433,6 +438,7 @@ export function slotBrief({ bible, slot, role, weights, theme, variantSeed = 0, 
   const sceneOpening = SCENE_OPENINGS[spin];
   const entryFocus = ENTRY_FOCUSES[(spin + 3) % 6];
   const differentiation = differentiateLine(slot, variantSeed);
+  const identityLine = bible.anchor.tagline ? `${cap(bible.anchor.tagline).replace(/\.$/, "")}.` : "";
 
   const sentences = [
     `Track ${slot.index + 1} of ${bible.album.trackCount} — ${role.label.toLowerCase()}. ${cap(role.brief)}`,
@@ -441,6 +447,7 @@ export function slotBrief({ bible, slot, role, weights, theme, variantSeed = 0, 
     bible.anchor.instrument,
     bpm > 0 ? `Set the pulse at ${bpm} BPM and hold it steady without sounding metronomic.` : "",
     emotionLine,
+    identityLine,
     entryFocus,
     bible.anchor.motif,
     bible.anchor.craft,

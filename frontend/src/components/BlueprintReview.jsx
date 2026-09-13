@@ -1,4 +1,4 @@
-import { Check, MousePointerClick } from "lucide-react";
+import { Check, MousePointerClick, ShieldCheck } from "lucide-react";
 
 function cx(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -14,14 +14,21 @@ const ROLE_CLASS = {
   closer: "bg-rose-500/20 text-rose-300 border-rose-500/40",
 };
 
+const LEVEL_CLASS = {
+  pass: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+  warn: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+  fail: "border-red-500/40 bg-red-500/10 text-red-300",
+};
+
 /* Pre-export blueprint review: the whole plan in one place, so nothing ships
  * sight-unseen. Per-track chemistry, roles, purposes, and the pulse trajectory
  * are all shown before the user approves. */
-export default function BlueprintReview({ blueprint, journey, onSelectTrack, onApprove }) {
+export default function BlueprintReview({ blueprint, journey, matrix, approved = false, approvalSlots = {}, onSelectTrack, onApprove }) {
   if (!blueprint || !journey) return null;
   const bible = blueprint.bible;
   const { album, anchor, climaxPosition } = bible;
   const { slots, tempo } = journey;
+  const matrixFails = matrix?.level === "fail";
 
   const rows = blueprint.slots.map((slot, i) => ({
     slot,
@@ -34,18 +41,36 @@ export default function BlueprintReview({ blueprint, journey, onSelectTrack, onA
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-[#d4af37]">Blueprint review</p>
-          <p className="mt-1 text-sm text-stone-400">
-            {album.name} · {album.archetypeName} · climax on track {climaxPosition.slotIndex + 1} (
-            {Math.round(climaxPosition.pct)}%)
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-sm text-stone-400">
+              {album.name} · {album.archetypeName} · climax on track {climaxPosition.slotIndex + 1} (
+              {Math.round(climaxPosition.pct)}%)
+            </p>
+            {matrix && (
+              <span className={cx("rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase", LEVEL_CLASS[matrix.level])}>
+                matrix {matrix.level} · {matrix.score}
+              </span>
+            )}
+            {approved && (
+              <span className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                <ShieldCheck className="h-3 w-3" /> plan approved
+              </span>
+            )}
+          </div>
         </div>
         {onApprove && (
           <button
             onClick={onApprove}
-            className="inline-flex items-center gap-2 rounded-md border border-[#d4af37]/40 bg-[#d4af37] px-3 py-1.5 text-xs font-medium text-black hover:bg-[#e8c14a]"
+            disabled={matrixFails || approved}
+            title={matrixFails ? "Matrix checks fail — fix the flagged rules first" : approved ? "Plan already approved" : undefined}
+            className={
+              approved
+                ? "inline-flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300"
+                : "inline-flex items-center gap-2 rounded-md border border-[#d4af37]/40 bg-[#d4af37] px-3 py-1.5 text-xs font-medium text-black hover:bg-[#e8c14a] disabled:cursor-not-allowed disabled:opacity-40"
+            }
           >
             <Check className="h-3.5 w-3.5" />
-            Approve plan
+            {approved ? "Plan approved" : "Approve plan"}
           </button>
         )}
       </div>
@@ -58,6 +83,21 @@ export default function BlueprintReview({ blueprint, journey, onSelectTrack, onA
           <p className="mt-2 text-xs text-stone-500">
             Motif: {anchor.motif}
           </p>
+          {Array.isArray(anchor.moodRange) && anchor.moodRange.length > 0 && (
+            <p className="mt-1 text-xs text-stone-500">
+              Mood range: {anchor.moodRange.join(", ")}
+            </p>
+          )}
+          {Array.isArray(anchor.colors) && anchor.colors.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-stone-500">Palette:</span>
+              {anchor.colors.slice(0, 4).map((c, i) => (
+                <span key={i} className="rounded-full border border-[#d4af37]/30 bg-[#d4af37]/10 px-2 py-0.5 text-[10px] text-[#f1d574]">
+                  {c}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="rounded-md border border-white/10 bg-black/20 p-3">
@@ -92,6 +132,7 @@ export default function BlueprintReview({ blueprint, journey, onSelectTrack, onA
               <th className="px-3 py-2 text-[10px] uppercase text-stone-500">Chemistry</th>
               <th className="px-3 py-2 text-[10px] uppercase text-stone-500">BPM</th>
               <th className="px-3 py-2 text-[10px] uppercase text-stone-500">Purpose</th>
+              <th className="px-3 py-2 text-[10px] uppercase text-stone-500">Approved</th>
             </tr>
           </thead>
           <tbody>
@@ -123,6 +164,13 @@ export default function BlueprintReview({ blueprint, journey, onSelectTrack, onA
                   <td className="px-3 py-2 align-top text-xs text-stone-400">{slot.bpm}</td>
                   <td className="px-3 py-2 align-top text-xs text-stone-400">
                     {chem?.purpose || explanation?.job || ""}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    {approvalSlots?.[i] ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    ) : (
+                      <span className="text-stone-600">—</span>
+                    )}
                   </td>
                 </tr>
               );

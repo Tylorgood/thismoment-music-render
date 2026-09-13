@@ -16,6 +16,11 @@ except ImportError:
     from music_library import MusicLibrary, make_router
 
 try:
+    from .album_projects import make_router as make_album_projects_router
+except ImportError:
+    from album_projects import make_router as make_album_projects_router
+
+try:
     from motor.motor_asyncio import AsyncIOMotorClient
 except ImportError:
     AsyncIOMotorClient = None
@@ -125,6 +130,7 @@ async def get_status_checks():
 
 music_root = Path(os.environ.get("MUSIC_LIBRARY_ROOT", ROOT_DIR.parent / "MusicLibrary"))
 app.include_router(make_router(MusicLibrary(music_root)), prefix="/api")
+app.include_router(make_album_projects_router(MusicLibrary(music_root)), prefix="/api")
 app.include_router(api_router)
 
 app.add_middleware(
