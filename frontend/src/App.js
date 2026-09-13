@@ -3,6 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Home from "@/pages/Home";
 import MusicLibrary from "@/pages/MusicLibrary";
+import PromptStudio from "@/pages/PromptStudio";
 import { Toaster } from "@/components/ui/sonner";
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/music" element={<MusicLibrary />} />
+          <Route path="/prompts" element={<PromptStudio />} />
         </Routes>
       </BrowserRouter>
       <Toaster
