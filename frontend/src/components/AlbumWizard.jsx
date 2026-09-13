@@ -7,8 +7,10 @@ import {
   ENDING_OPTIONS,
   ENERGY_OPTIONS,
   JOURNEY_OPTIONS,
+  requestThemeClarification,
   intentToBlueprint,
 } from "@/lib/userIntentToBlueprint";
+import { TEMPO_OPTIONS } from "@/lib/albumTempo";
 import { ARCHETYPE_NAMES, ARCHETYPE_TAGLINES } from "@/lib/promptEngine";
 
 function cx(...classes) {
@@ -46,6 +48,7 @@ const STEPS = [
   "The journey",
   "The ending",
   "The sound",
+  "The pulse",
   "Review & build",
 ];
 
@@ -58,8 +61,12 @@ export default function AlbumWizard({ onLaunch }) {
   const [ending, setEnding] = useState(ENDING_OPTIONS[0]);
   const [genre, setGenre] = useState(GENRES[0].id);
   const [energy, setEnergy] = useState(ENERGY_OPTIONS[1]);
+  const [tempo, setTempo] = useState(TEMPO_OPTIONS[0]);
+  const [meaning, setMeaning] = useState(null);
   const [freeText, setFreeText] = useState("");
   const [step, setStep] = useState(0);
+
+  const clarification = requestThemeClarification(theme);
 
   const canAdvance = () => {
     switch (step) {
@@ -85,6 +92,8 @@ export default function AlbumWizard({ onLaunch }) {
       journey,
       energySeed: energy.words,
       freeText,
+      tempoId: tempo.id,
+      themeMeaning: meaning,
     });
     onLaunch(intent);
     toast.success("Album built — opening the studio with your dna");
@@ -150,20 +159,56 @@ export default function AlbumWizard({ onLaunch }) {
         )}
 
         {step === 1 && (
-          <label className="block text-xs text-stone-400">
-            What is this record about? (a scene, a feeling, a story)
-            <textarea
-              value={theme}
-              onChange={(e) => setTheme(e.target.value)}
-              rows={4}
-              placeholder="e.g. the last drive of the night through a city going dark — windows lit, no words left"
-              className="mt-1 w-full rounded-md border border-white/10 bg-black/25 p-2.5 text-sm text-white outline-none focus:border-[#d4af37]"
-            />
-            <p className="mt-1 text-stone-500">
-              This becomes the album's narrative, runs through every track's anchor lines, and
-              conditions the track titles.
-            </p>
-          </label>
+          <div className="space-y-4">
+            <label className="block text-xs text-stone-400">
+              What is this record about? (a scene, a feeling, a story)
+              <textarea
+                value={theme}
+                onChange={(e) => {
+                  setTheme(e.target.value);
+                  if (meaning) setMeaning(null);
+                }}
+                rows={4}
+                placeholder="e.g. the last drive of the night through a city going dark — windows lit, no words left"
+                className="mt-1 w-full rounded-md border border-white/10 bg-black/25 p-2.5 text-sm text-white outline-none focus:border-[#d4af37]"
+              />
+              <p className="mt-1 text-stone-500">
+                This becomes the album's narrative, runs through every track's anchor lines, and
+                conditions the track titles.
+              </p>
+            </label>
+            {clarification && (
+              <div className="rounded-md border border-[#d4af37]/30 bg-[#d4af37]/5 p-3">
+                <p className="text-sm font-medium text-stone-200">
+                  Which way does this album read “{clarification.capsule}”?
+                </p>
+                <p className="mt-1 text-xs text-stone-500">
+                  One question, then the story locks in. You can also skip — the engine holds its
+                  neutral reading.
+                </p>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {clarification.options.map((option) => {
+                    const selected = meaning?.id === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        onClick={() => setMeaning(option)}
+                        className={cx(
+                          "rounded-md border p-3 text-left transition-colors",
+                          selected
+                            ? "border-[#d4af37]/50 bg-[#d4af37]/10 text-stone-100"
+                            : "border-white/10 bg-black/20 text-stone-300 hover:border-white/25"
+                        )}
+                      >
+                        <span className="text-sm font-medium">{option.label}</span>
+                        <span className="mt-1 block text-xs text-stone-500">{option.description}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {step === 2 && (
@@ -256,6 +301,27 @@ export default function AlbumWizard({ onLaunch }) {
         )}
 
         {step === 6 && (
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-stone-300">How should the pulse move?</p>
+            <div className="mt-3">
+              <ChoiceGrid
+                options={TEMPO_OPTIONS}
+                value={tempo.id}
+                onPick={(o) => setTempo(o)}
+                labelOf={(o) => `${o.label}`}
+              />
+            </div>
+            <p className="text-xs text-stone-500">
+              Wavelength <em>inside</em> the genre's bounds — the engine shapes a coherent beat
+              story rather than a single fixed number.
+            </p>
+            {tempo.description ? (
+              <p className="text-sm italic text-stone-400">{tempo.description}</p>
+            ) : null}
+          </div>
+        )}
+
+        {step === 7 && (
           <div className="space-y-3">
             <p className="text-sm font-medium text-stone-300">Review</p>
             {(() => {
@@ -271,6 +337,8 @@ export default function AlbumWizard({ onLaunch }) {
                 journey,
                 energySeed: energy.words,
                 freeText,
+                tempoId: tempo.id,
+                themeMeaning: meaning,
               });
               const lead = intent.archetypeWeights.indexOf(Math.max(...intent.archetypeWeights));
               return (

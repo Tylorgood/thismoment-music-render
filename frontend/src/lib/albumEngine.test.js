@@ -15,6 +15,7 @@ import {
   BEGINNING_OPTIONS,
   ENDING_OPTIONS,
   JOURNEY_OPTIONS,
+  THEME_INTERPRETATION_OPTIONS,
   intentToBlueprint,
 } from "./userIntentToBlueprint";
 
@@ -245,8 +246,12 @@ describe("albumEngine: theme-conditioned titles + prompt diversity", () => {
     const a = buildAlbumBlueprint(THEMED).slots.map((s) => s.title).join("|");
     const b = buildAlbumBlueprint({ ...CONFIG, theme: "a clearing of ancient fog forest" }).slots.map((s) => s.title).join("|");
     expect(a).not.toBe(b);
+    // Plot-first titles reference the narrative's world rather than splicing
+    // the theme's literal words into the text.
     const themedWord = ["Clearing", "Ancient", "Forest"].some((w) => b.includes(w));
-    expect(themedWord).toBe(true);
+    expect(themedWord).toBe(false);
+    const themes = buildAlbumBlueprint({ ...CONFIG, theme: "a clearing of ancient fog forest" }).bible.world;
+    expect(themes.families.some((f) => f.name === "weather")).toBe(true);
   });
 
   it("variant seeds re-roll titles without duplicates", () => {
@@ -404,5 +409,78 @@ describe("albumEngine: exports for the Suno workflow", () => {
     const ex = buildAlbumExport(blueprint, { token: "t-x" });
     expect(ex.ingest.tracks).toHaveLength(10);
     expect(ex.pasteSheet).toContain("ALBUM:");
+  });
+});
+
+describe("P2.5 acceptance: a deliberate 10-track emotional journey", () => {
+  it("every track has distinct chemistry, neighbor-residual, and reads as one album", () => {
+    const meaning = THEME_INTERPRETATION_OPTIONS.find((o) => o.id === "heartbreak");
+    const intent = intentToBlueprint({
+      albumName: "Acceptance Test",
+      theme: "love",
+      genre: "techno",
+      trackCount: 10,
+      freeText: "cinematic, slow-burn",
+      beginSeed: BEGINNING_OPTIONS[1].seed,
+      beginWords: BEGINNING_OPTIONS[1].words,
+      endSeed: ENDING_OPTIONS[0].seed,
+      endWords: ENDING_OPTIONS[0].words,
+      journey: JOURNEY_OPTIONS[1],
+      energySeed: ["slow", "spacious"],
+      tempoId: "peak-release",
+      themeMeaning: meaning,
+    });
+    const lead = intent.archetypeWeights.indexOf(Math.max(...intent.archetypeWeights));
+    const blueprint = buildAlbumBlueprint({
+      albumName: intent.album.name,
+      genre: intent.album.genre,
+      theme: intent.album.theme,
+      trackCount: intent.album.trackCount,
+      archetypeIndex: lead,
+      slotWeights: intent.slotWeights,
+      climaxPctOverride: intent.climaxPctOverride,
+      endingBias: intent.endingBias,
+      seedBase: intent.seedBase,
+      tempoBehavior: intent.tempo.behavior,
+      tempoSeed: intent.tempo.seed,
+    });
+    const journey = buildJourneyView(blueprint);
+    expect(journey.slots).toHaveLength(10);
+
+    journey.slots.forEach((s) => {
+      expect(s.chemistry).toBeDefined();
+      expect(s.chemistry.values).toHaveLength(8);
+      expect(s.chemistry.purpose.length).toBeGreaterThan(0);
+    });
+
+    const climaxIntensity = journey.slots[journey.climaxIndex].intensity;
+    const maxIntensity = Math.max(...journey.slots.map((s) => s.intensity));
+    expect(climaxIntensity).toBe(maxIntensity);
+
+    const climaxActivation = journey.slots[journey.climaxIndex].chemistry.activation;
+    expect(climaxActivation).toBe(Math.max(...journey.slots.map((s) => s.chemistry.activation)));
+
+    for (let i = 1; i < journey.trackCount - 1; i += 1) {
+      const s = journey.slots[i].chemistry;
+      const total = s.inherited.length + s.strengthened.length + s.reduced.length + s.introduced.length;
+      expect(total).toBeGreaterThan(0);
+    }
+
+    const zeroDistances = journey.slots.map((s) => s.chemistry.zeroDistance);
+    const meanZero = zeroDistances.reduce((a, b) => a + b, 0) / zeroDistances.length;
+    // Cohesion: the record stays gravitationally anchored on average, with at
+    // least one track essentially at the genome and none fully alien.
+    expect(meanZero).toBeLessThanOrEqual(80);
+    expect(Math.min(...zeroDistances)).toBeLessThanOrEqual(40);
+    expect(Math.max(...zeroDistances)).toBeLessThanOrEqual(95);
+
+    const tempo = journey.tempo;
+    const climaxTempo = tempo[journey.climaxIndex];
+    expect(climaxTempo).toBe(Math.max(...tempo));
+    expect(tempo[0]).toBeLessThan(climaxTempo);
+    expect(tempo[tempo.length - 1]).toBeLessThan(climaxTempo);
+
+    const clusterIds = blueprint.slots.map((s) => s.dominantCluster);
+    expect(new Set(clusterIds).size).toBe(1);
   });
 });

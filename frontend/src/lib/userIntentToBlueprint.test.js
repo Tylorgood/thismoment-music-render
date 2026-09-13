@@ -3,6 +3,9 @@ import {
   ENDING_OPTIONS,
   ENERGY_OPTIONS,
   JOURNEY_OPTIONS,
+  THEME_INTERPRETATION_OPTIONS,
+  capsuleOf,
+  requestThemeClarification,
   intentToBlueprint,
 } from "./userIntentToBlueprint";
 
@@ -69,7 +72,40 @@ describe("userIntentToBlueprint", () => {
       energySeed: ENERGY_OPTIONS[3].words,
     });
     expect(result.matchedWords.length).toBeGreaterThan(0);
-    expect(result.directionSummary.length).toBe(2);
+    expect(result.directionSummary.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("detects broad narrative capsules for one clarifying question", () => {
+    expect(capsuleOf("all about love")).toBe("love");
+    expect(requestThemeClarification("an album about love")).toEqual(
+      expect.objectContaining({ capsule: "love", ambiguous: true })
+    );
+    expect(requestThemeClarification("love")).toBeTruthy();
+    expect(requestThemeClarification("neon rain over the freeway")).toBeNull();
+    const menu = requestThemeClarification("love");
+    expect(menu.options.length).toBe(THEME_INTERPRETATION_OPTIONS.length);
+    // The mechanism is reusable: love options render with the subject swapped in.
+    expect(menu.options[0].description).toContain("love");
+  });
+
+  it("applies a chosen interpretation as another soft voice, not a hardcode", () => {
+    const sarcastic = THEME_INTERPRETATION_OPTIONS.find((o) => o.id === "heartbreak");
+    const result = intentToBlueprint({ ...BASE, theme: "love", themeMeaning: sarcastic });
+    expect(result.meaning).toBe(sarcastic);
+    expect(result.climaxPctOverride).toBe(sarcastic.climaxPct);
+    expect(result.directionSummary.some((l) => l.toLowerCase().includes("reads"))).toBe(true);
+    // still deterministic and within the blend model
+    expect(result.slotWeights.length).toBe(10);
+    expect(result.archetypeWeights.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
+  });
+
+  it("carries a tempo trajectory through to the blueprint args", () => {
+    const result = intentToBlueprint({ ...BASE, tempoId: "peak-release" });
+    expect(result.tempo).toEqual({ behavior: "peak-release", seed: expect.any(Number) });
+    expect(result.directionSummary.some((l) => l.includes("Peak and release"))).toBe(true);
+    const reroll = intentToBlueprint({ ...BASE, tempoId: "locked" });
+    expect(reroll.tempo.behavior).toBe("locked");
+    expect(reroll.tempo.seed).not.toBe(result.tempo.seed);
   });
 
   it("clamps track count to the engine's range", () => {

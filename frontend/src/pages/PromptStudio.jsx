@@ -18,6 +18,7 @@ import {
 } from "@/lib/albumEngine";
 import AlbumWizard from "@/components/AlbumWizard";
 import AlbumJourney from "@/components/AlbumJourney";
+import BlueprintReview from "@/components/BlueprintReview";
 
 const EMOTION_LABELS = {
   mean_joy: "Joy",
@@ -156,6 +157,7 @@ export default function PromptStudio() {
   const [mode, setMode] = useState("wizard");
   const [wizardDna, setWizardDna] = useState(null);
   const [slotEdits, setSlotEdits] = useState({});
+  const [showReview, setShowReview] = useState(false);
   const [blends, setBlends] = useState(
     Array.from({ length: 10 }, (_, i) => {
       const base = Array(5).fill(0);
@@ -186,6 +188,8 @@ export default function PromptStudio() {
       climaxPctOverride: wizardDna ? wizardDna.climaxPctOverride : null,
       endingBias: wizardDna ? wizardDna.endingBias : null,
       seedBase: wizardDna ? wizardDna.seedBase : 0,
+      tempoBehavior: wizardDna ? wizardDna.tempo?.behavior ?? "locked" : "locked",
+      tempoSeed: wizardDna ? wizardDna.tempo?.seed ?? 0 : 0,
     });
   }, [name, genre, theme, trackCount, templateArchetype, albumNonce, wizardDna]);
 
@@ -742,6 +746,29 @@ export default function PromptStudio() {
             </div>
 
             {journey && <AlbumJourney journey={journey} />}
+
+            {journey && (
+              <>
+                <button
+                  onClick={() => setShowReview((v) => !v)}
+                  className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs text-stone-300 hover:bg-white/10"
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                  {showReview ? "Close blueprint review" : "Open blueprint review"}
+                </button>
+                {showReview && (
+                  <BlueprintReview
+                    blueprint={blueprint}
+                    journey={journey}
+                    onSelectTrack={(i) => {
+                      setActiveSlot(i);
+                      setShowReview(false);
+                    }}
+                    onApprove={() => setShowReview(false)}
+                  />
+                )}
+              </>
+            )}
 
             <div className="rounded-lg border border-white/10 bg-[#11100f] p-4">
               <h2 className="text-lg font-semibold">Full album</h2>

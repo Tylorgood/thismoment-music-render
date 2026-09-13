@@ -14,6 +14,8 @@ import {
   normalizeWeights,
 } from "./promptEngine";
 import { createProjectVocabulary } from "./titleVocabulary";
+import { profileToGenome, buildFullChemistryArc, composeChemistry } from "./albumChemistry";
+import { buildTempoTrajectory } from "./albumTempo";
 
 const ROLE_SUFFIX_POOLS = {
   opener: ["First Light", "Second Dawn", "Open Sky", "Warm Center"],
@@ -125,6 +127,149 @@ export const TRACK_ROLES = [
 
 const ROLE_BY_ID = Object.fromEntries(TRACK_ROLES.map((r) => [r.id, r]));
 
+// ── P2.5 differentiated-behavior pools ──────────────────────────────────
+// Each album gets one behavior sentence per sonic dimension per track, chosen
+// with a stride that guarantees adjacency rarely repeats inside the pool.
+
+const ARRANGEMENT_BEHAVIORS = [
+  "Let the arrangement peel back to bare bones between sections, then rebuild on the motif.",
+  "Layer one new element into each pass of the chorus so the track densifies without rushing.",
+  "Play the whole track in a single long gravitating line; let sections ask and answer each other.",
+  "Let the beat recede for the mid-section and return as a fuller, steadier version.",
+  "Keep the arrangement additive from the first bar, trading boldness for an inexorable build.",
+  "Build each section as a separate room the motif walks through, joined by a shared bridge.",
+  "Keep it lean: no section adds more than three layers on top of the heart of the track.",
+];
+
+const RHYTHMIC_BEHAVIORS = [
+  "Hold a hypnotic pulse and change texture, not tempo, when the track turns.",
+  "Let the rhythm stop-start around the motif so the groove is felt in the silences.",
+  "Push the groove forward with swung, ahead-of-the-beat percussion; let tension come from anticipation.",
+  "Keep the kick unbroken and let everything else play against it in syncopation.",
+  "Open with sparse hits and let the rhythm fill in as the soundscape widens.",
+  "Use a rolling, free rhythm under a strict beat; treat rhythm as atmosphere first.",
+  "Chop the groove for the second half and pull the motif over the gaps it leaves.",
+];
+
+const INSTRUMENTATION_PROMINENCE = [
+  "Foreground the lead as a clear human voice; keep the pad low in the field.",
+  "Let the bass lead the conversation and the melody listen in from a step back.",
+  "Put a single texture (fuzz, tape, choir) slightly above everything else as the star.",
+  "Keep percussion the loudest identity; instruments trade phrases around it.",
+  "Star the harmonized middle voices; the top line stays gentle.",
+  "Center the arrangement on a lone keyboard and treat the band as a halo.",
+  "Make every element audible but give the arrangement one proud foreground sound.",
+];
+
+const HARMONIC_TENSION = [
+  "Resolve the harmony generously; let it comfort rather than challenge.",
+  "Stay primarily consonant with one sour note left in to keep it honest.",
+  "Drift between two chords for the verses, then open a wider harmony for the release.",
+  "Let a tense, unresolved chord hang into each section boundary.",
+  "Push major and minor against each other; keep the resolution half-earned.",
+  "Stay low and open in the same key, changing color, not key, across the track.",
+  "Build the track around a pedal note with the harmony orbiting it.",
+];
+
+const ENTRY_BEHAVIORS = [
+  "Enter on a single voice or instrument and let the first groove arrive a beat late.",
+  "Start on a field of air and pulsing low end before any full phrase appears.",
+  "Open on the hook itself, mid-phrase, as if always in motion.",
+  "Begin with a distant, reversed sound that resolves into the track's first downbeat.",
+  "Start with a whispered wall of noise and pull the piece out of it.",
+  "Open with an isolated rhythmic cell the whole track grows from.",
+  "Start on the second bar of the loop, as if already underway.",
+];
+
+const BREAKDOWN_BEHAVIORS = [
+  "Break to near-silence once, then return with the motif intact.",
+  "Let the mid-section strip to a lone rhythmic body before the theme returns.",
+  "Use a false breakdown: almost empty, then jump straight back to full tension.",
+  "Dissolve into texture for the breakdown and rebuild on the low end first.",
+  "Cut the arrangement to just the bass and hold the space with motionless pads.",
+  "Make the breakdown the emotional pivot: thinner, slower, then urgent again.",
+  "Do away with overt breakdowns; keep continuous motion and let tension vary internally.",
+];
+
+const CLIMAX_BEHAVIORS = [
+  "At the peak, add the fullest possible arrangement in one decisive step.",
+  "Grow the climax over two final passes, adding density each time, then snap it back.",
+  "Peak not with volume but with doubled parts and a wider harmonic spread.",
+  "Climb to the climax on rhythmic fire; let it cut off into one held, open sound.",
+  "Stagger the entrance of every layer so the peak is assembled in full view.",
+  "Place the peak where the motif first doubles through harmony; the album's one release.",
+  "Let the climax stay short but total: everything at once, then the room empties.",
+];
+
+const ENDING_BEHAVIORS = [
+  "End with the motif played alone, falling to silence.",
+  "Let the last chord ring out into the album's opening air.",
+  "End mid-loop, fading as if the track keeps playing after you leave.",
+  "Finish on a clean hook, then one resolved hit.",
+  "End on a false button: the track appears to finish then returns for two quiet bars.",
+  "Disappear into texture and let the closer start from that same air.",
+  "Land the final resolution then hold a single instrument over the silence.",
+];
+
+const EMOTION_WORDS = {
+  joy: "joy",
+  trust: "trust",
+  fear: "fear",
+  surprise: "surprise",
+  sadness: "sadness",
+  disgust: "disgust",
+  anger: "anger",
+  anticipation: "anticipation",
+};
+
+function pickSpread(arr, i, salt, offset = 0) {
+  const n = arr.length;
+  const idx = (((i * 3 + salt * 5 + offset * 7) % n) + n) % n;
+  return arr[idx];
+}
+
+const BEHAVIOR_POOLS = [
+  ARRANGEMENT_BEHAVIORS,
+  RHYTHMIC_BEHAVIORS,
+  INSTRUMENTATION_PROMINENCE,
+  HARMONIC_TENSION,
+  ENTRY_BEHAVIORS,
+  BREAKDOWN_BEHAVIORS,
+  CLIMAX_BEHAVIORS,
+  ENDING_BEHAVIORS,
+];
+
+function differentiateLine(slot, variantSeed) {
+  const words = BEHAVIOR_POOLS.map((pool, offset) =>
+    pickSpread(pool, slot.index, variantSeed, offset)
+  );
+  return words.join(" ");
+}
+
+function chemistryEmotionLine(chemistry, theme) {
+  if (!chemistry) return "";
+  const dominant = (chemistry.dominant || []).slice(0, 3).map((d) => EMOTION_WORDS[d.key] || d.key);
+  const residualBits = [];
+  if (chemistry.inherited && chemistry.inherited.length) {
+    residualBits.push(`carries ${chemistry.inherited.slice(0, 3).join(", ")}`);
+  }
+  if (chemistry.strengthened && chemistry.strengthened.length) {
+    residualBits.push(`magnifies ${chemistry.strengthened.slice(0, 3).join(", ")}`);
+  }
+  if (chemistry.reduced && chemistry.reduced.length) {
+    residualBits.push(`lets ${chemistry.reduced.slice(0, 3).join(", ")} fade`);
+  }
+  if (chemistry.introduced && chemistry.introduced.length) {
+    residualBits.push(`introduces ${chemistry.introduced.slice(0, 3).join(", ")}`);
+  }
+  const residualLine = residualBits.length ? ` It ${residualBits.join("; ")}.` : "";
+  return (
+    `Mood: ${dominant.join(", ")} at ${chemistry.activation} energy and ${chemistry.intensity}% of the album peak.` +
+    (chemistry.purpose ? ` ${cap(chemistry.purpose)}` : "") +
+    residualLine
+  );
+}
+
 function clamp(n, lo, hi) {
   return Math.min(hi, Math.max(lo, n));
 }
@@ -226,6 +371,10 @@ export function buildAlbumBible({ albumName, genre, archetypeIndex, theme, track
     trackCount: arc.slots.length,
     seedBase,
   });
+  const motifArtifact = vocab.artifacts?.[0] || null;
+  const motifLine = flavor.extra.includes("film")
+    ? `Let the motif ${motifArtifact ? `be ${motifArtifact}: ` : ""}thread through every track of this album like a recurring scene.`
+    : `Keep one unforgettable motif alive across every track of this album${motifArtifact ? ` — ${motifArtifact}` : ""}. Repeat it like a memory, changing through phrasing, harmony, tone, and space.`;
 
   return {
     album: {
@@ -240,9 +389,7 @@ export function buildAlbumBible({ albumName, genre, archetypeIndex, theme, track
       instrument: genreDef.instrument,
       craft: genreDef.craft,
       texture: genreDef.texture,
-      motif: flavor.extra.includes("film")
-        ? "Let a central motif thread through every track of this album."
-        : "Keep one unforgettable motif alive across every track of this album. Repeat it like a memory, changing through phrasing, harmony, tone, and space.",
+      motif: motifLine,
       flavor: flavor.extra,
       colors: anchorColor,
       moodRange: emotions,
@@ -258,6 +405,7 @@ export function buildAlbumBible({ albumName, genre, archetypeIndex, theme, track
       slotIndex: arc.climaxIndex,
     },
     vocab,
+    world: { families: vocab.world, motifArtifact },
   };
 }
 
@@ -265,23 +413,26 @@ function intensityWord(intensity) {
   return (INTENSITY_WORDS.find((w) => intensity < w.max) || INTENSITY_WORDS[INTENSITY_WORDS.length - 1]).word;
 }
 
-export function slotBrief({ bible, slot, role, weights, theme, variantSeed = 0, note = "" }) {
+export function slotBrief({ bible, slot, role, weights, theme, variantSeed = 0, note = "", chemistry = null, bpmOverride = null }) {
   const genreDef = findGenre(bible.album.genre);
   const cleanWeights = normalizeWeights(weights);
   const profile = blendCentroids(cleanWeights);
   const c = classify(profile);
   const baseBand = bandIndexForEnergy(profile.mean_energy ?? 50);
   const band = ENERGY_BANDS[clamp(baseBand + role.energy, 0, ENERGY_BANDS.length - 1)];
-  const bpm = clamp(bible.bpmCenter + role.bpm, 70, 200);
+  const bpm = clamp(bpmOverride ?? (bible.bpmCenter + role.bpm), 70, 200);
   const emotions = dominantEmotions(profile).map((meta) => meta.word);
+  const chemLine = chemistryEmotionLine(chemistry, theme);
   const emotionLine =
-    emotions.length > 0
+    chemLine ||
+    (emotions.length > 0
       ? `Mood: ${emotions.join(", ")}. Carrying the album's overarching story${theme ? `: ${theme}` : ""}, delivered with ${intensityWord(role.intensity)}.`
-      : `${theme ? `Thematic narrative: ${theme}.` : ""} `;
+      : `${theme ? `Thematic narrative: ${theme}.` : ""} `);
   const noteLine = note ? `Special direction for this track: ${note}.` : "";
   const spin = (slot.index + variantSeed) % 6;
   const sceneOpening = SCENE_OPENINGS[spin];
   const entryFocus = ENTRY_FOCUSES[(spin + 3) % 6];
+  const differentiation = differentiateLine(slot, variantSeed);
 
   const sentences = [
     `Track ${slot.index + 1} of ${bible.album.trackCount} — ${role.label.toLowerCase()}. ${cap(role.brief)}`,
@@ -296,6 +447,7 @@ export function slotBrief({ bible, slot, role, weights, theme, variantSeed = 0, 
     `Texture: ${c.texture.join(", ")}; arrangement ${c.complexity.slice(0, 2).join(", ")}. ${bible.anchor.texture}`,
     ...c.structure.map((bit) => cap(`${bit}.`)),
     `Arrangement should ${c.climax}.`,
+    differentiation,
     bible.anchor.flavor,
     noteLine,
     "Sound original and cinematic; avoid formulas. Leave silence as a tool.",
@@ -326,14 +478,31 @@ export function slotBrief({ bible, slot, role, weights, theme, variantSeed = 0, 
     analysis: c,
     variantSeed,
     note,
+    chemistry: chemistry || null,
   };
 }
 
-export function buildAlbumBlueprint({ albumName, genre, archetypeIndex, theme, trackCount, slotWeights = [], roleOverrides = {}, variantSeeds = {}, slotNotes = {}, climaxPctOverride = null, endingBias = null, seedBase = 0 }) {
+export function buildAlbumBlueprint({ albumName, genre, archetypeIndex, theme, trackCount, slotWeights = [], roleOverrides = {}, variantSeeds = {}, slotNotes = {}, climaxPctOverride = null, endingBias = null, seedBase = 0, tempoBehavior = "locked", tempoSeed = 0 }) {
   const bible = buildAlbumBible({ albumName, genre, archetypeIndex, theme, trackCount, roleOverrides, climaxPctOverride, seedBase });
   const oneHot = ALBUM_ARCHETYPES.map((_, i) => (i === bible.album.archetypeIndex ? 1 : 0));
   const endingIndex = Number.isInteger(endingBias) && endingBias >= 0 && endingBias <= ALBUM_ARCHETYPES.length - 1 ? endingBias : null;
-  const slots = bible.arc.slots.map((s) => {
+  const genome = profileToGenome(bible.profile);
+  const tempo = buildTempoTrajectory({
+    baseBpm: bible.bpmCenter,
+    genre: findGenre(bible.album.genre),
+    trackCount: bible.arc.slots.length,
+    behavior: tempoBehavior,
+    seed: tempoSeed,
+    climaxIndex: bible.arc.climaxIndex,
+  });
+  const chemistryArc = buildFullChemistryArc({
+    genome,
+    slots: bible.arc.slots,
+    climaxIndex: bible.arc.climaxIndex,
+    trackCount: bible.arc.slots.length,
+    endTarget: genome,
+  });
+  const slots = bible.arc.slots.map((s, i) => {
     const role = ROLE_BY_ID[s.roleId];
     let weights = normalizeWeights(slotWeights[s.index] || oneHot);
     // endingBias nudges the last 1-2 tracks toward an ending coordinate without
@@ -350,9 +519,11 @@ export function buildAlbumBlueprint({ albumName, genre, archetypeIndex, theme, t
       theme,
       variantSeed: variantSeeds[s.index] ?? 0,
       note: slotNotes[s.index] ?? "",
+      chemistry: chemistryArc[i],
+      bpmOverride: tempo[i],
     });
   });
-  return { bible, slots };
+  return { bible, slots, chemistry: chemistryArc, tempo, genome, tempoBehavior };
 }
 
 export function regenerateSlot(blueprint, slotIndex, { role = null, weights = null, theme = null, variantSeed = null, note = null } = {}) {
@@ -365,6 +536,21 @@ export function regenerateSlot(blueprint, slotIndex, { role = null, weights = nu
   let themeToUse = theme;
   if (themeToUse === null) themeToUse = bible.album.theme;
 
+  // Recomputes chemistry for this slot only, seeded by the original upstream
+  // snapshot so sibling tracks keep their inherited story.
+  const chemistry = blueprint.chemistry
+    ? composeChemistry({
+        genome: blueprint.genome || profileToGenome(bible.profile),
+        role: roleDef,
+        slotIndex,
+        climaxIndex: bible.arc.climaxIndex,
+        trackCount: bible.album.trackCount,
+        prev: blueprint.chemistry[slotIndex - 1]?.values || null,
+        next: blueprint.chemistry[slotIndex + 1]?.values || null,
+        endTarget: blueprint.genome || profileToGenome(bible.profile),
+      })
+    : null;
+
   return slotBrief({
     bible,
     slot: { index: slot.index, total: bible.album.trackCount },
@@ -373,6 +559,8 @@ export function regenerateSlot(blueprint, slotIndex, { role = null, weights = nu
     theme: themeToUse,
     variantSeed: variantSeed === null ? slot.variantSeed : variantSeed,
     note: note === null ? slot.note : note,
+    chemistry,
+    bpmOverride: blueprint.tempo?.[slotIndex] ?? null,
   });
 }
 
@@ -436,6 +624,20 @@ export function buildJourneyView(blueprint) {
     intensity: Math.round(slot.intensity * 100),
     bpm: slot.bpm,
     emotions: slot.analysis.emotions,
+    chemistry: slot.chemistry
+      ? {
+          values: slot.chemistry.values,
+          activation: slot.chemistry.activation,
+          intensity: slot.chemistry.intensity,
+          zeroDistance: slot.chemistry.zeroDistance,
+          dominant: slot.chemistry.dominant,
+          inherited: slot.chemistry.inherited,
+          strengthened: slot.chemistry.strengthened,
+          reduced: slot.chemistry.reduced,
+          introduced: slot.chemistry.introduced,
+          purpose: slot.chemistry.purpose,
+        }
+      : null,
   }));
   const climax = blueprint.bible.climaxPosition;
   const explanations = blueprint.slots.map((slot, i) =>
@@ -452,6 +654,8 @@ export function buildJourneyView(blueprint) {
       Math.min(...slots.map((s) => s.bpm)),
       Math.max(...slots.map((s) => s.bpm)),
     ],
+    tempo: blueprint.tempo ? [...blueprint.tempo] : slots.map((s) => s.bpm),
+    tempoBehavior: blueprint.tempoBehavior || "locked",
   };
 }
 

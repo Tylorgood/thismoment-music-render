@@ -1,5 +1,6 @@
 import { ALBUM_ARCHETYPES, normalizeWeights } from "./promptEngine";
 import { hashString } from "./titleVocabulary";
+import { TEMPO_OPTIONS } from "./albumTempo";
 
 /*
  * Turns a plain-language wizard conversation into coordinates in the existing
@@ -164,6 +165,116 @@ export const ENERGY_OPTIONS = [
   { id: "dense", label: "Fast & relentless", words: ["relentless", "breakbeat"] },
 ];
 
+// ── Theme clarification (reusable, not Love-only) ───────────────────────
+// Any broad central subject the wizard hears can be reinterpreted through
+// these narrative stances. The mechanism is generic: the subject is a
+// variable, the stance is an emotional reading that seeds the same blend +
+// arc machinery everything else uses.
+export const THEME_INTERPRETATION_OPTIONS = [
+  {
+    id: "newly-met",
+    label: "Newly met",
+    descriptor: "# has just arrived and still feels brand new",
+    seed: [0.5, 0.1, 0.2, 0.1, 0.1],
+    words: ["radiant", "glowing", "intimate"],
+    contour: "a fresh discovery that slowly deepens",
+    climaxPct: 60,
+  },
+  {
+    id: "consuming",
+    label: "All-consuming",
+    descriptor: "# takes over the whole record",
+    seed: [0.1, 0.35, 0.15, 0.1, 0.3],
+    words: ["obsessive", "driven", "urgent"],
+    contour: "unrelenting pressure building toward a single surrender",
+    climaxPct: 74,
+  },
+  {
+    id: "heartbreak",
+    label: "Broken",
+    descriptor: "# is lost, and the record grieves",
+    seed: [0.15, 0.05, 0.6, 0.1, 0.1],
+    words: ["sorrow", "emptiness", "fading"],
+    contour: "a slow mourning that eventually steadies",
+    climaxPct: 45,
+  },
+  {
+    id: "reconciliation",
+    label: "Reconciled",
+    descriptor: "# was fought over, then made peace",
+    seed: [0.55, 0.05, 0.2, 0.1, 0.1],
+    words: ["resolved", "kind", "settled"],
+    contour: "conflict that resolves into warmth",
+    climaxPct: 55,
+  },
+  {
+    id: "unreachable",
+    label: "Unreachable",
+    descriptor: "# never quite lands",
+    seed: [0.1, 0.2, 0.3, 0.15, 0.25],
+    words: ["cinematic", "volatile", "lonely"],
+    contour: "a longing that circles without landing",
+    climaxPct: 50,
+  },
+  {
+    id: "aged",
+    label: "Worn by time",
+    descriptor: "the record watches # age",
+    seed: [0.2, 0.15, 0.45, 0.1, 0.1],
+    words: ["melancholic", "distant", "slow"],
+    contour: "a long, patient perspective",
+    climaxPct: 35,
+  },
+  {
+    id: "first",
+    label: "First and only",
+    descriptor: "one # that changes everything once",
+    seed: [0.1, 0.1, 0.15, 0.3, 0.35],
+    words: ["volatile", "spectacle", "unpredictable"],
+    contour: "a single irreversible turning point",
+    climaxPct: 70,
+  },
+  {
+    id: "open-door",
+    label: "Still turning",
+    descriptor: "# left a door open",
+    seed: [0.3, 0.1, 0.25, 0.15, 0.2],
+    words: ["cinematic", "unpredictable"],
+    contour: "unresolved motion that keeps repeating",
+    climaxPct: 48,
+  },
+];
+
+// Capsules are broad central nouns worth one clarifying question. Asking about
+// "love" is just the first case; any of these triggers the same mechanism.
+export const AMBIGUOUS_CAPSULES = [
+  "love", "home", "loss", "fear", "time", "family", "ambition", "god",
+  "leaving", "longing", "the road", "heart", "hope", "memory", "distance",
+];
+
+export function capsuleOf(freeText) {
+  if (!freeText || typeof freeText !== "string") return null;
+  const text = ` ${freeText.toLowerCase()} `;
+  return AMBIGUOUS_CAPSULES.find((c) => text.includes(` ${c} `)) || null;
+}
+
+/* When the narrative is a single broad subject, asks a reusable clarifying
+ * question: which way does the album read # ? Returns the interpretation menu.
+ */
+export function requestThemeClarification(freeText) {
+  const capsule = capsuleOf(freeText);
+  if (!capsule) return null;
+  return {
+    capsule,
+    ambiguous: true,
+    options: THEME_INTERPRETATION_OPTIONS.map((o) => ({
+      ...o,
+      label: o.label,
+      description: `${o.descriptor.replace("#", capsule)}. ${o.contour}.`,
+    })),
+  };
+}
+
 function tokensOf(text) {
   if (!text || typeof text !== "string") return [];
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
@@ -215,15 +326,24 @@ export function intentToBlueprint({
   journey = JOURNEY_OPTIONS[0],
   energySeed = ENERGY_OPTIONS[1].words,
   freeText = "",
+  tempoId = "locked",
+  themeMeaning = null,
 }) {
   const count = Math.max(4, Math.min(14, Number(trackCount) || 10));
+  const meaning = themeMeaning && THEME_INTERPRETATION_OPTIONS.some((o) => o.id === themeMeaning.id)
+    ? themeMeaning
+    : null;
+  const journeyResolved = meaning
+    ? { ...journey, climaxPct: meaning.climaxPct ?? journey.climaxPct, contour: `${meaning.contour}. ${journey.contour}` }
+    : journey;
 
   // Each soft source votes into the shared five-archetype blend space.
   const beginVote = accumulateWeight(beginWords, LEXICON);
   const endVote = accumulateWeight(endWords, LEXICON);
   const energyVote = accumulateWeight(energySeed, LEXICON);
   const freeVote = accumulateWeight(tokensOf(freeText), LEXICON);
-  const journeyMomentum = accumulateWeight(tokensOf(journey.contour), { rollercoaster: LEXICON.rollercoaster, driven: LEXICON.driven, explosive: LEXICON.explosive, quiet: LEXICON.quiet });
+  const meaningVote = meaning ? accumulateWeight(meaning.words, LEXICON) : { acc: ALBUM_ARCHETYPES.map(() => 0), matched: [] };
+  const journeyMomentum = accumulateWeight(tokensOf(journeyResolved.contour), { rollercoaster: LEXICON.rollercoaster, driven: LEXICON.driven, explosive: LEXICON.explosive, quiet: LEXICON.quiet });
 
   const archetypeWeights = normalizeWeights(
     ALBUM_ARCHETYPES.map((_, i) =>
@@ -231,13 +351,14 @@ export function intentToBlueprint({
       + (endVote.acc[i] || 0) * 0.6
       + (energyVote.acc[i] || 0) * 0.8
       + (freeVote.acc[i] || 0) * 1
+      + (meaningVote.acc[i] || 0) * 1.1
       + (journeyMomentum.acc[i] || 0) * 0.35
       + 0.5
     )
   );
 
-  const matchedWords = [...beginVote.matched, ...endVote.matched, ...energyVote.matched, ...freeVote.matched, ...journeyMomentum.matched];
-  const meaningful = new Set([...beginWords, ...endWords, ...energySeed, ...tokensOf(journey.contour), ...tokensOf(freeText)]);
+  const matchedWords = [...beginVote.matched, ...endVote.matched, ...energyVote.matched, ...freeVote.matched, ...meaningVote.matched, ...journeyMomentum.matched];
+  const meaningful = new Set([...beginWords, ...endWords, ...energySeed, ...(meaning ? meaning.words : []), ...tokensOf(journeyResolved.contour), ...tokensOf(freeText)]);
   const confidence = meaningful.size ? Math.min(1, matchedWords.length / meaningful.size) : 0.4;
 
   // Beginning/ending only seed blend coordinates for the outermost tracks; the
@@ -253,8 +374,9 @@ export function intentToBlueprint({
   });
 
   const endingBiasIndex = endSeed.indexOf(Math.max(...endSeed));
-  const seedBase = hashString(`${albumName}|${theme}|${genre}|${journey.id}`);
-  const climaxPctOverride = journey.climaxPct;
+  const seedBase = hashString(`${albumName}|${theme}|${genre}|${journey.id}|${meaning ? meaning.id : ""}`);
+  const climaxPctOverride = journeyResolved.climaxPct;
+  const tempoSeed = hashString(`${seedBase}|tempo|${tempoId}`);
 
   return {
     album: { name: albumName || "Untitled Album", genre, theme: theme.trim(), trackCount: count },
@@ -265,13 +387,17 @@ export function intentToBlueprint({
     endingBias: endingBiasIndex,
     climaxPctOverride,
     seedBase,
-    journey,
+    journey: journeyResolved,
+    meaning,
+    tempo: { behavior: tempoId, seed: tempoSeed },
     matchedWords: [...new Set(matchedWords)],
     confidence,
     directionSummary: [
-      `Starts ${BEGINNING_OPTIONS.find((o) => o.seed === beginSeed)?.label || "small"} / ${journey.contour} / ${ENDING_OPTIONS.find((o) => o.seed === endSeed)?.label || "resolved"}.`,
+      `Starts ${BEGINNING_OPTIONS.find((o) => o.seed === beginSeed)?.label || "small"} / ${journeyResolved.contour} / ${ENDING_OPTIONS.find((o) => o.seed === endSeed)?.label || "resolved"}.`,
       `Energy ${ENERGY_OPTIONS.find((o) => o.words.join("|") === energySeed.join("|"))?.label || "mid-tempo"}.`,
-    ],
+      meaning ? `Reads "${theme}" as ${meaning.label.toLowerCase()}.` : "",
+      `Tempo: ${TEMPO_OPTIONS.find((o) => o.id === tempoId)?.label || "Locked / hypnotic"}.`,
+    ].filter(Boolean),
   };
 }
 
