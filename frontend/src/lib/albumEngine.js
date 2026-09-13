@@ -425,6 +425,36 @@ export function explainSlot(slot, previous = null, next = null) {
   };
 }
 
+/* Reshapes a blueprint into the data the Journey visualization draws from, so
+ * the UI is a pure function of the same arc the engine drives. */
+export function buildJourneyView(blueprint) {
+  const slots = blueprint.slots.map((slot, i) => ({
+    index: slot.index,
+    title: slot.title,
+    role: slot.role,
+    roleLabel: slot.roleLabel,
+    intensity: Math.round(slot.intensity * 100),
+    bpm: slot.bpm,
+    emotions: slot.analysis.emotions,
+  }));
+  const climax = blueprint.bible.climaxPosition;
+  const explanations = blueprint.slots.map((slot, i) =>
+    explainSlot(slot, blueprint.slots[i - 1] || null, blueprint.slots[i + 1] || null)
+  );
+  return {
+    trackCount: slots.length,
+    climaxIndex: climax.slotIndex,
+    climaxPct: climax.pct,
+    slots,
+    explanations,
+    peakIntensity: Math.max(...slots.map((s) => s.intensity)),
+    bpmRange: [
+      Math.min(...slots.map((s) => s.bpm)),
+      Math.max(...slots.map((s) => s.bpm)),
+    ],
+  };
+}
+
 export function buildAlbumIngestPack(blueprint, { modelVersion = "V4.5", token = "" } = {}) {
   const slots = blueprint.slots.map((s, i) => ({
     token,

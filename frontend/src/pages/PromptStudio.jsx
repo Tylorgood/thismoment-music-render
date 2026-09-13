@@ -13,9 +13,11 @@ import {
   TRACK_ROLES,
   buildAlbumBlueprint,
   buildAlbumExport,
+  buildJourneyView,
   regenerateSlot,
 } from "@/lib/albumEngine";
 import AlbumWizard from "@/components/AlbumWizard";
+import AlbumJourney from "@/components/AlbumJourney";
 
 const EMOTION_LABELS = {
   mean_joy: "Joy",
@@ -234,6 +236,10 @@ export default function PromptStudio() {
   const activeBlueprint = useMemo(
     () => (blueprint ? { bible: blueprint.bible, slots: albumSlots || blueprint.slots } : null),
     [blueprint, albumSlots]
+  );
+  const journey = useMemo(
+    () => (activeBlueprint ? buildJourneyView(activeBlueprint) : null),
+    [activeBlueprint]
   );
   const active = effectiveSlots[activeSlot] || slotResults[activeSlot];
 
@@ -734,6 +740,8 @@ export default function PromptStudio() {
                 The peak should {active.analysis.climax}.
               </p>
             </div>
+
+            {journey && <AlbumJourney journey={journey} />}
 
             <div className="rounded-lg border border-white/10 bg-[#11100f] p-4">
               <h2 className="text-lg font-semibold">Full album</h2>

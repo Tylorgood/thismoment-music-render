@@ -4,12 +4,19 @@ import {
   buildAlbumArc,
   buildAlbumBlueprint,
   buildAlbumIngestPack,
+  buildJourneyView,
   buildPasteSheet,
   buildAlbumExport,
   explainSlot,
   regenerateSlot,
 } from "./albumEngine";
 import { ALBUM_ARCHETYPES, GENRES } from "./promptEngine";
+import {
+  BEGINNING_OPTIONS,
+  ENDING_OPTIONS,
+  JOURNEY_OPTIONS,
+  intentToBlueprint,
+} from "./userIntentToBlueprint";
 
 const CONFIG = {
   albumName: "Night Signal",
@@ -313,6 +320,57 @@ describe("albumEngine: arc knobs + plain-language explainer", () => {
     const last = explainSlot(slots[slots.length - 1]);
     expect(first.job.length).toBeGreaterThan(0);
     expect(last.job.length).toBeGreaterThan(0);
+  });
+});
+
+describe("albumEngine: journey view matches the arc", () => {
+  function maxAt(list) {
+    return list.indexOf(Math.max(...list));
+  }
+
+  it("climax track, peak, roles and length all match the bible arc", () => {
+    const blueprint = buildAlbumBlueprint(CONFIG);
+    const journey = buildJourneyView(blueprint);
+    expect(journey.trackCount).toBe(blueprint.slots.length);
+    expect(journey.climaxIndex).toBe(blueprint.bible.climaxPosition.slotIndex);
+    expect(journey.climaxPct).toBe(blueprint.bible.climaxPosition.pct);
+    expect(maxAt(journey.slots.map((s) => s.intensity))).toBe(journey.climaxIndex);
+    expect(journey.slots.map((s) => s.role)).toEqual(blueprint.slots.map((s) => s.role));
+    expect(journey.slots.map((s) => s.bpm)).toEqual(blueprint.slots.map((s) => s.bpm));
+  });
+
+  it("explains every track in plain language, including the opener and closer", () => {
+    const journey = buildJourneyView(buildAlbumBlueprint(CONFIG));
+    expect(journey.explanations.length).toBe(journey.trackCount);
+    expect(journey.explanations[0].inherits).toContain("Opens the album");
+    expect(journey.explanations[journey.trackCount - 1].movesNext).toContain("Closes the album");
+  });
+
+  it("follows a climaxPctOverride and ending bias the wizard may set", () => {
+    const intent = intentToBlueprint({
+      theme: "a city going dark",
+      albumName: "Neon Hours",
+      genre: "bass-electronic",
+      trackCount: 10,
+      journey: JOURNEY_OPTIONS[1],
+      beginSeed: BEGINNING_OPTIONS[1].seed,
+      endSeed: ENDING_OPTIONS[3].seed,
+    });
+    const blueprint = buildAlbumBlueprint({
+      albumName: intent.album.name,
+      genre: intent.album.genre,
+      theme: intent.album.theme,
+      trackCount: intent.album.trackCount,
+      archetypeIndex: intent.archetypeWeights.indexOf(Math.max(...intent.archetypeWeights)),
+      slotWeights: intent.slotWeights,
+      climaxPctOverride: intent.climaxPctOverride,
+      endingBias: intent.endingBias,
+      seedBase: intent.seedBase,
+    });
+    const journey = buildJourneyView(blueprint);
+    expect(journey.climaxIndex).toBe(blueprint.bible.climaxPosition.slotIndex);
+    expect(blueprint.bible.album.archetypeIndex).toBeLessThanOrEqual(4);
+    expect(journey.slots[journey.trackCount - 1].intensity <= 90).toBe(true);
   });
 });
 
