@@ -217,7 +217,7 @@ export default function PromptStudio() {
       .catch(() => toast.error("Clipboard unavailable"));
   };
 
-  const spread = Object.entries(active.analysis.profile)
+  const spread = Object.entries(active.profile ?? {})
     .filter(([key]) => key !== "climax_track_index_pct" && key !== "emotional_variance_index")
     .map(([key, value]) => ({ key, value, label: EMOTION_LABELS[key] || key }));
 
