@@ -10,7 +10,7 @@ import { ALBUM_ENGINE_VERSION } from "./albumEngine";
  * guard surfaces a banner instead of silently rerolling.
  */
 
-export function serializeAlbum(blueprint, { name, genre, theme, trackCount, templateArchetype, albumNonce, wizardDna, slotEdits, approval }) {
+export function serializeAlbum(blueprint, { name, genre, theme, trackCount, templateArchetype, albumNonce, wizardDna, slotEdits, approval, production }) {
   const inputs = {
     name,
     genre,
@@ -27,6 +27,7 @@ export function serializeAlbum(blueprint, { name, genre, theme, trackCount, temp
     inputs,
     blueprint,
     approval: approval || { plan: false, slots: {} },
+    production: production || { status: "draft", slots: {} },
   };
 }
 
@@ -57,6 +58,7 @@ export function deserializeAlbum(payload) {
   }
 
   const approval = payload.approval && typeof payload.approval === "object" ? payload.approval : { plan: false, slots: {} };
+  const production = payload.production && typeof payload.production === "object" ? payload.production : { status: "draft", slots: {} };
 
   return {
     name,
@@ -65,6 +67,7 @@ export function deserializeAlbum(payload) {
     inputs,
     blueprint,
     approval,
+    production,
     warnings,
   };
 }
@@ -74,6 +77,7 @@ export function toRestorePatch(project) {
     inputs: project.inputs,
     blueprint: project.blueprint,
     approval: project.approval,
+    production: project.production,
   };
 }
 

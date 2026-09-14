@@ -24,6 +24,7 @@ class AlbumProjectSave(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict)
     blueprint: dict[str, Any] = Field(default_factory=dict)
     approval: dict[str, Any] = Field(default_factory=dict)
+    production: dict[str, Any] = Field(default_factory=dict)
 
 
 class AlbumProjectState(BaseModel):
@@ -32,6 +33,7 @@ class AlbumProjectState(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict)
     blueprint: dict[str, Any] = Field(default_factory=dict)
     approval: dict[str, Any] = Field(default_factory=dict)
+    production: dict[str, Any] = Field(default_factory=dict)
     status: Optional[str] = Field(default=None, max_length=40)
 
 
@@ -91,7 +93,7 @@ def _summary(row: sqlite3.Row) -> dict[str, Any]:
 
 def _projects_table_sql() -> str:
     return """SELECT p.id, p.name, p.status, p.engine_version, p.inputs_json, p.blueprint_json,
-           p.approval_json, p.created_at, p.updated_at,
+           p.approval_json, p.production_json, p.created_at, p.updated_at,
            (SELECT COUNT(*) FROM album_project_versions v WHERE v.project_id = p.id) AS version_count,
            COALESCE((SELECT MAX(v.version) FROM album_project_versions v WHERE v.project_id = p.id), 0) AS latest_version
       FROM album_projects p"""
@@ -129,6 +131,7 @@ def make_router(library: MusicLibrary) -> APIRouter:
         payload["inputs"] = _load(row["inputs_json"], {})
         payload["blueprint"] = _load(row["blueprint_json"], {})
         payload["approval"] = _load(row["approval_json"], {})
+        payload["production"] = _load(row["production_json"], {})
         payload["versions"] = [dict(version_row) for version_row in versions]
         return payload
 
@@ -138,7 +141,7 @@ def make_router(library: MusicLibrary) -> APIRouter:
         with library.connect() as conn:
             _fetch_project(conn, project_id)
             version_row = conn.execute(
-                "SELECT v.version, v.label, v.snapshot_name, v.inputs_json, v.blueprint_json, v.approval_json, v.created_at, p.engine_version FROM album_project_versions v JOIN album_projects p ON p.id = v.project_id WHERE v.project_id = ? AND v.version = ?",
+                "SELECT v.version, v.label, v.snapshot_name, v.inputs_json, v.blueprint_json, v.approval_json, v.production_json, v.created_at, p.engine_version FROM album_project_versions v JOIN album_projects p ON p.id = v.project_id WHERE v.project_id = ? AND v.version = ?",
                 (project_id, version),
             ).fetchone()
             if not version_row:
@@ -151,6 +154,7 @@ def make_router(library: MusicLibrary) -> APIRouter:
             "inputs": _load(version_row["inputs_json"], {}),
             "blueprint": _load(version_row["blueprint_json"], {}),
             "approval": _load(version_row["approval_json"], {}),
+            "production": _load(version_row["production_json"], {}),
             "engine_version": version_row["engine_version"],
             "created_at": version_row["created_at"],
         }
@@ -163,12 +167,12 @@ def make_router(library: MusicLibrary) -> APIRouter:
         now = utc_now()
         with library.connect() as conn:
             conn.execute(
-                "INSERT INTO album_projects (id, name, status, engine_version, inputs_json, blueprint_json, approval_json, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?)",
-                (project_id, payload.name, payload.engine_version, _dump(payload.inputs), _dump(payload.blueprint), _dump(payload.approval), now, now),
+                "INSERT INTO album_projects (id, name, status, engine_version, inputs_json, blueprint_json, approval_json, production_json, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, payload.name, payload.engine_version, _dump(payload.inputs), _dump(payload.blueprint), _dump(payload.approval), _dump(payload.production), now, now),
             )
             conn.execute(
-                "INSERT INTO album_project_versions (project_id, version, label, snapshot_name, inputs_json, blueprint_json, approval_json, created_at) VALUES (?, 1, '', ?, ?, ?, ?, ?)",
-                (project_id, payload.name, _dump(payload.inputs), _dump(payload.blueprint), _dump(payload.approval), now),
+                "INSERT INTO album_project_versions (project_id, version, label, snapshot_name, inputs_json, blueprint_json, approval_json, production_json, created_at) VALUES (?, 1, '', ?, ?, ?, ?, ?, ?)",
+                (project_id, payload.name, _dump(payload.inputs), _dump(payload.blueprint), _dump(payload.approval), _dump(payload.production), now),
             )
         return {"id": project_id, "name": payload.name, "version": 1, "created_at": now}
 
@@ -181,13 +185,13 @@ def make_router(library: MusicLibrary) -> APIRouter:
             now = utc_now()
             if payload.status is not None:
                 conn.execute(
-                    "UPDATE album_projects SET inputs_json = ?, blueprint_json = ?, approval_json = ?, status = ?, updated_at = ? WHERE id = ?",
-                    (_dump(payload.inputs), _dump(payload.blueprint), _dump(payload.approval), payload.status, now, project_id),
+                    "UPDATE album_projects SET inputs_json = ?, blueprint_json = ?, approval_json = ?, production_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                    (_dump(payload.inputs), _dump(payload.blueprint), _dump(payload.approval), _dump(payload.production), payload.status, now, project_id),
                 )
             else:
                 conn.execute(
-                    "UPDATE album_projects SET inputs_json = ?, blueprint_json = ?, approval_json = ?, updated_at = ? WHERE id = ?",
-                    (_dump(payload.inputs), _dump(payload.blueprint), _dump(payload.approval), now, project_id),
+                    "UPDATE album_projects SET inputs_json = ?, blueprint_json = ?, approval_json = ?, production_json = ?, updated_at = ? WHERE id = ?",
+                    (_dump(payload.inputs), _dump(payload.blueprint), _dump(payload.approval), _dump(payload.production), now, project_id),
                 )
         return {"id": project_id, "updated_at": now}
 
@@ -203,8 +207,8 @@ def make_router(library: MusicLibrary) -> APIRouter:
             ).fetchone()["next"]
             now = utc_now()
             conn.execute(
-                "INSERT INTO album_project_versions (project_id, version, label, snapshot_name, inputs_json, blueprint_json, approval_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (project_id, next_version, payload.label, row["name"], row["inputs_json"], row["blueprint_json"], row["approval_json"], now),
+                "INSERT INTO album_project_versions (project_id, version, label, snapshot_name, inputs_json, blueprint_json, approval_json, production_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, next_version, payload.label, row["name"], row["inputs_json"], row["blueprint_json"], row["approval_json"], row["production_json"], now),
             )
         return {"id": project_id, "version": next_version, "created_at": now}
 
@@ -218,12 +222,12 @@ def make_router(library: MusicLibrary) -> APIRouter:
             now = utc_now()
             base_name = row["name"]
             conn.execute(
-                "INSERT INTO album_projects (id, name, status, engine_version, inputs_json, blueprint_json, approval_json, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?)",
-                (new_id, f"Copy of {base_name}", row["engine_version"], row["inputs_json"], row["blueprint_json"], row["approval_json"], now, now),
+                "INSERT INTO album_projects (id, name, status, engine_version, inputs_json, blueprint_json, approval_json, production_json, created_at, updated_at) VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)",
+                (new_id, f"Copy of {base_name}", row["engine_version"], row["inputs_json"], row["blueprint_json"], row["approval_json"], row["production_json"], now, now),
             )
             conn.execute(
-                "INSERT INTO album_project_versions (project_id, version, label, snapshot_name, inputs_json, blueprint_json, approval_json, created_at) VALUES (?, 1, '', ?, ?, ?, ?, ?)",
-                (new_id, f"Copy of {base_name}", row["inputs_json"], row["blueprint_json"], row["approval_json"], now),
+                "INSERT INTO album_project_versions (project_id, version, label, snapshot_name, inputs_json, blueprint_json, approval_json, production_json, created_at) VALUES (?, 1, '', ?, ?, ?, ?, ?, ?)",
+                (new_id, f"Copy of {base_name}", row["inputs_json"], row["blueprint_json"], row["approval_json"], row["production_json"], now),
             )
         return {"id": new_id, "name": f"Copy of {base_name}", "version": 1, "created_at": now}
 

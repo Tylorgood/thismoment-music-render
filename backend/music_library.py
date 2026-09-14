@@ -194,6 +194,7 @@ class MusicLibrary:
                     inputs_json TEXT NOT NULL,
                     blueprint_json TEXT NOT NULL,
                     approval_json TEXT NOT NULL DEFAULT '{}',
+                    production_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -209,6 +210,7 @@ class MusicLibrary:
                     inputs_json TEXT NOT NULL,
                     blueprint_json TEXT NOT NULL,
                     approval_json TEXT NOT NULL DEFAULT '{}',
+                    production_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     UNIQUE (project_id, version)
                 );
@@ -221,6 +223,8 @@ class MusicLibrary:
             ensure_column(conn, "track_analysis", "beat_interval", "REAL")
             ensure_column(conn, "track_analysis", "first_beat", "REAL")
             ensure_column(conn, "track_analysis", "beat_confidence", "REAL")
+            ensure_column(conn, "album_projects", "production_json", "TEXT")
+            ensure_column(conn, "album_project_versions", "production_json", "TEXT")
 
     def repair_paths(self) -> None:
         if not self.db_path.exists():

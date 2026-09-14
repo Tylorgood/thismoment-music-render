@@ -36,6 +36,9 @@ import {
 import AlbumWizard from "@/components/AlbumWizard";
 import AlbumJourney from "@/components/AlbumJourney";
 import BlueprintReview from "@/components/BlueprintReview";
+import AlbumProduction from "@/components/AlbumProduction";
+import { emptyProduction, buildProductionManifest } from "@/lib/albumProduction";
+import { searchLibraryTracks } from "@/lib/albumProjects";
 
 const EMOTION_LABELS = {
   mean_joy: "Joy",
@@ -186,6 +189,8 @@ export default function PromptStudio() {
   const [renameDraft, setRenameDraft] = useState("");
   const [projectVersions, setProjectVersions] = useState([]);
   const projectsTokenSet = Boolean(getProjectToken());
+  const [production, setProduction] = useState({ status: "draft", slots: {} });
+  const [libraryCache, setLibraryCache] = useState({});
   const [blends, setBlends] = useState(
     Array.from({ length: 10 }, (_, i) => {
       const base = Array(5).fill(0);
@@ -234,6 +239,7 @@ export default function PromptStudio() {
     setTemplateArchetype(intent.archetypeWeights.indexOf(Math.max(...intent.archetypeWeights)));
     setSlotEdits({});
     setApproval({ plan: false, slots: {} });
+    setProduction(emptyProduction(intent.album.trackCount || 10));
     setMode("studio");
   };
 
@@ -351,6 +357,7 @@ export default function PromptStudio() {
     setWizardDna(restored.inputs.wizardDna || null);
     setSlotEdits({});
     setApproval(restored.approval || { plan: false, slots: {} });
+    setProduction(restored.production || emptyProduction(Number(restored.inputs.trackCount) || 10));
     setCurrentProject({
       id,
       name: restored.name,
@@ -383,6 +390,7 @@ export default function PromptStudio() {
       wizardDna,
       slotEdits,
       approval,
+      production,
     });
     try {
       if (currentProject?.id) {
@@ -468,6 +476,57 @@ export default function PromptStudio() {
     } catch (error) {
       handleProjectError(error);
     }
+  };
+
+  const handleFetchTrack = async (query) => {
+    const tracks = await searchLibraryTracks(query);
+    const nextCache = { ...libraryCache };
+    tracks.forEach((track) => {
+      nextCache[track.id] = track;
+    });
+    setLibraryCache(nextCache);
+    return tracks;
+  };
+
+  const handleFinishAlbum = async () => {
+    const finished = { ...production, status: "finished" };
+    setProduction(finished);
+    toast.success("Album finished — all tracks accepted");
+    if (currentProject?.id) {
+      try {
+        const serialized = serializeAlbum(savedBlueprint, {
+          name,
+          genre,
+          theme,
+          trackCount,
+          templateArchetype,
+          albumNonce,
+          wizardDna,
+          slotEdits,
+          approval,
+          production: finished,
+        });
+        await saveState(currentProject.id, { ...toRestorePatch(serialized), status: "finished" });
+        refreshProjects();
+      } catch (error) {
+        handleProjectError(error);
+      }
+    }
+  };
+
+  const handleExportManifest = () => {
+    if (!activeBlueprint) return;
+    const manifest = buildProductionManifest(activeBlueprint, production, libraryCache);
+    const blob = new Blob([JSON.stringify({ album: activeBlueprint.bible.album.name, finished: production.status === "finished", tracks: manifest }, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${name.replace(/\s+/g, "-").toLowerCase()}-production-manifest.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Production manifest exported");
   };
 
   const handleOpenVersion = async (version) => {
@@ -665,6 +724,7 @@ export default function PromptStudio() {
                 }
                 setAlbumNonce((n) => n + 1);
                 setApproval({ plan: false, slots: {} });
+                setProduction(emptyProduction(effectiveSlots?.length || blends.length));
                 toast.success("Album re-rolled — titles shifted, album genes intact");
               }}
               className="inline-flex items-center gap-2 rounded-md border border-[#d4af37]/50 bg-[#d4af37] px-3 py-2 text-sm font-medium text-black hover:bg-[#e8c14a]"
@@ -1288,6 +1348,18 @@ export default function PromptStudio() {
                 </table>
               </div>
             </div>
+
+            {activeBlueprint && (
+              <AlbumProduction
+                blueprint={activeBlueprint}
+                production={production}
+                onChange={setProduction}
+                libraryCache={libraryCache}
+                onFetchTrack={handleFetchTrack}
+                onFinish={handleFinishAlbum}
+                onExport={handleExportManifest}
+              />
+            )}
           </div>
         </div>
           </>)}

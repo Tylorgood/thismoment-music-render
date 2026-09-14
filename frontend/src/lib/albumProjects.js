@@ -82,6 +82,15 @@ export function deleteProject(projectId) {
   return request(`/${encodeURIComponent(projectId)}`, { method: "DELETE" });
 }
 
+export async function searchLibraryTracks(query) {
+  const response = await fetch(`${API_BASE}/api/music/tracks?query=${encodeURIComponent(query || "")}&sort=title`);
+  if (!response.ok) {
+    throw new Error(`Library search failed (${response.status})`);
+  }
+  const body = await response.json();
+  return body.tracks || [];
+}
+
 export default {
   getProjectToken,
   setProjectToken,
@@ -94,5 +103,6 @@ export default {
   duplicateProject,
   renameProject,
   deleteProject,
+  searchLibraryTracks,
   ProjectTokenError,
 };
