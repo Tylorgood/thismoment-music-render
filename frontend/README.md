@@ -1,5 +1,7 @@
 # This Moment V2 Frontend
 
+> Read [OPENCODE.md](../OPENCODE.md) and [CURRENT_STATE.md](../docs/CURRENT_STATE.md) for ownership and the independent `/music` app. The persistence statement below applies to V2 business records; music history uses localStorage and cues/loops are volatile.
+
 React frontend for the Supabase-backed operating system.
 
 ## Required Environment

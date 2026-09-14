@@ -4,6 +4,11 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Home from "@/pages/Home";
 import MusicLibrary from "@/pages/MusicLibrary";
 import PromptStudio from "@/pages/PromptStudio";
+import AlbumHome from "@/pages/AlbumHome";
+import AlbumBuilder from "@/pages/AlbumBuilder";
+import DjSetBuilder from "@/pages/DjSetBuilder";
+import Placeholder from "@/pages/Placeholder";
+import AppShell from "@/components/shell/AppShell";
 import { Toaster } from "@/components/ui/sonner";
 
 function App() {
@@ -28,8 +33,28 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/music" element={<MusicLibrary />} />
-          <Route path="/prompts" element={<PromptStudio />} />
+          <Route element={<AppShell />}>
+            <Route path="/music" element={<MusicLibrary />} />
+            <Route path="/prompts" element={<PromptStudio />} />
+            <Route
+              path="/albums"
+              element={<AlbumHome />}
+            />
+            <Route path="/albums/:id" element={<AlbumBuilder />} />
+            <Route path="/albums/:id/:section" element={<AlbumBuilder />} />
+            <Route path="/dj" element={<DjSetBuilder />} />
+            <Route
+              path="/create"
+              element={
+                <Placeholder
+                  title="Create"
+                  description="From an idea to an album: the wizard will run from here once Phase 4 lands."
+                  ctaLabel="Open the prompt studio"
+                  ctaTo="/prompts"
+                />
+              }
+            />
+          </Route>
         </Routes>
       </BrowserRouter>
       <Toaster

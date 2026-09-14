@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { createDjEngine } from "../audio/djEngine";
+import { setTheaterContext, clearTheaterContext } from "@/lib/theaterContext";
 import { remainingPlaybackSeconds, startDeckTransition } from "../audio/deckTransition";
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL || "";
@@ -406,7 +407,7 @@ function readStoredJson(key, fallback) {
   }
 }
 
-export default function MusicLibrary() {
+export default function MusicLibrary({ mode = "library" }) {
   const audioRef = useRef(null);
   const deckBRef = useRef(null);
   const incomingMixAudioRef = useRef(null);
@@ -438,7 +439,7 @@ export default function MusicLibrary() {
   const [playlists, setPlaylists] = useState([]);
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [songSheetOpen, setSongSheetOpen] = useState(false);
-  const [activeView, setActiveView] = useState("now");
+  const [activeView, setActiveView] = useState(mode === "dj" ? "performance" : "now");
   const [editTab, setEditTab] = useState("identity");
   const [draftTitle, setDraftTitle] = useState("");
   const [draftMetadata, setDraftMetadata] = useState({});
@@ -455,7 +456,7 @@ export default function MusicLibrary() {
   const [jumpAround, setJumpAround] = useState(true);
   const [fadeSeconds, setFadeSeconds] = useState(4);
   const [isFading, setIsFading] = useState(false);
-  const [djToolsOpen, setDjToolsOpen] = useState(false);
+  const [djToolsOpen, setDjToolsOpen] = useState(mode === "dj");
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -1696,6 +1697,18 @@ export default function MusicLibrary() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activeTrack, goRelative, isAutoMode, seek, skipToNextLive, togglePlayback, updateActiveTrack]);
+
+  useEffect(() => {
+    if (!activeTrack) return clearTheaterContext();
+    setTheaterContext({
+      playing: isPlaying,
+      id: activeTrack.id,
+      title: activeTrack.display_title,
+      bpm: activeTrack.analysis?.bpm ?? undefined,
+      type: "library",
+    });
+    return clearTheaterContext;
+  }, [activeTrack, isPlaying]);
 
   return (
     <main className={`music-workstation ${isAutoMode ? "auto-mode" : "manual-mode"} ${djToolsOpen ? "dj-open" : "dj-closed"} view-${activeView}`}>

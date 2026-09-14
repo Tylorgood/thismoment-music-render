@@ -14,6 +14,69 @@
   --tms-muted: #a3a3a3;
   --tms-line: rgba(255, 255, 255, 0.08);
   --tms-line-gold: rgba(212, 175, 55, 0.3);
+
+  --ma-bg: #050505;
+  --ma-chrome: #0a0a0a;
+  --ma-surface-1: #121110;
+  --ma-surface-2: #1a1a1a;
+  --ma-surface-3: #222222;
+  --ma-inset: #0d0c0c;
+
+  --ma-fg: #f5f5f4;
+  --ma-fg-muted: #a3a3a3;
+  --ma-fg-faint: #6f6f6f;
+
+  --ma-line: rgba(255, 255, 255, 0.08);
+  --ma-line-strong: rgba(255, 255, 255, 0.16);
+
+  --ma-status-ok: #34d399;
+  --ma-status-ok-soft: rgba(52, 211, 153, 0.14);
+  --ma-status-warn: #fbbf24;
+  --ma-status-warn-soft: rgba(251, 191, 36, 0.14);
+  --ma-status-err: #f87171;
+  --ma-status-err-soft: rgba(248, 113, 113, 0.14);
+  --ma-status-info: #60a5fa;
+  --ma-status-info-soft: rgba(96, 165, 250, 0.14);
+  --ma-status-emotion: #c084fc;
+  --ma-status-emotion-alt: #f472b6;
+  --ma-status-emotion-soft: rgba(192, 132, 252, 0.14);
+
+  --ma-accent: #d4af37;
+  --ma-accent-strong: #e8c14a;
+  --ma-accent-soft: rgba(212, 175, 55, 0.14);
+  --ma-ring: rgba(212, 175, 55, 0.55);
+
+  --ma-radius-sm: 2px;
+  --ma-radius-md: 6px;
+  --ma-radius-lg: 10px;
+  --ma-radius-xl: 14px;
+
+  --ma-space-xs: 4px;
+  --ma-space-sm: 8px;
+  --ma-space-md: 12px;
+  --ma-space-lg: 16px;
+  --ma-space-xl: 24px;
+  --ma-space-2xl: 32px;
+  --ma-space-3xl: 48px;
+
+  --ma-font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --ma-font-display: "Cormorant Garamond", ui-serif, Georgia, serif;
+  --ma-font-mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+
+  --ma-z-base: 0;
+  --ma-z-raised: 10;
+  --ma-z-sticky: 100;
+  --ma-z-overlay: 1000;
+  --ma-z-palette: 1200;
+  --ma-z-toast: 1400;
+
+  --ma-motion-fast: 140ms;
+  --ma-motion-base: 260ms;
+  --ma-motion-slow: 500ms;
+  --ma-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --ma-glow-gold: 0 0 30px rgba(212, 175, 55, 0.35);
+  --ma-glow-emotion: 0 0 30px rgba(192, 132, 252, 0.35);
 }
 
 * {
@@ -62,6 +125,151 @@ body::before {
   font-family: "Cormorant Garamond", ui-serif, Georgia, serif;
   font-weight: 500;
   letter-spacing: -0.02em;
+}
+
+.ma-surface {
+  background-color: var(--ma-surface-1);
+}
+.ma-panel {
+  background-color: var(--ma-surface-2);
+}
+.ma-inset {
+  background-color: var(--ma-inset);
+}
+.ma-muted {
+  color: var(--ma-fg-muted);
+}
+.ma-faint {
+  color: var(--ma-fg-faint);
+}
+.ma-hairline {
+  border-color: var(--ma-line);
+}
+.ma-hairline-strong {
+  border-color: var(--ma-line-strong);
+}
+.ma-accent-text {
+  color: var(--ma-accent);
+}
+.ma-accent-bg {
+  background-color: var(--ma-accent);
+  color: #000;
+}
+.ma-ok-text {
+  color: var(--ma-status-ok);
+}
+.ma-warn-text {
+  color: var(--ma-status-warn);
+}
+.ma-err-text {
+  color: var(--ma-status-err);
+}
+.ma-info-text {
+  color: var(--ma-status-info);
+}
+.ma-emotion-text {
+  color: var(--ma-status-emotion);
+}
+.ma-ring-focus:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ma-ring);
+}
+
+.ma-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-width: 1px;
+  border-radius: var(--ma-radius-sm);
+  padding: 0.175rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  line-height: 1.25;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.ma-badge-dot {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.ma-ok-soft {
+  color: var(--ma-status-ok);
+  border-color: color-mix(in srgb, var(--ma-status-ok) 35%, transparent);
+  background-color: color-mix(in srgb, var(--ma-status-ok) 10%, transparent);
+}
+.ma-warn-soft {
+  color: var(--ma-status-warn);
+  border-color: color-mix(in srgb, var(--ma-status-warn) 35%, transparent);
+  background-color: color-mix(in srgb, var(--ma-status-warn) 12%, transparent);
+}
+.ma-err-soft {
+  color: var(--ma-status-err);
+  border-color: color-mix(in srgb, var(--ma-status-err) 35%, transparent);
+  background-color: color-mix(in srgb, var(--ma-status-err) 10%, transparent);
+}
+.ma-info-soft {
+  color: var(--ma-status-info);
+  border-color: color-mix(in srgb, var(--ma-status-info) 35%, transparent);
+  background-color: color-mix(in srgb, var(--ma-status-info) 10%, transparent);
+}
+.ma-emotion-soft {
+  color: var(--ma-status-emotion);
+  border-color: color-mix(in srgb, var(--ma-status-emotion) 35%, transparent);
+  background-color: color-mix(in srgb, var(--ma-status-emotion) 10%, transparent);
+}
+.ma-neutral-soft {
+  color: var(--ma-fg-muted);
+  border-color: var(--ma-line-strong);
+  background-color: var(--ma-inset);
+}
+
+/* Theater + neon persona */
+.ma-theater-bg {
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(192, 132, 252, 0.08) 0%, transparent 55%),
+    radial-gradient(120% 120% at 100% 100%, rgba(212, 175, 55, 0.06) 0%, transparent 60%);
+}
+.ma-glow {
+  box-shadow: var(--ma-glow-gold);
+}
+.ma-glow-emotion {
+  box-shadow: var(--ma-glow-emotion);
+}
+.ma-live-glow {
+  text-shadow: 0 0 12px rgba(192, 132, 252, 0.55);
+}
+.ma-live-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  border: 1px solid var(--ma-line);
+  border-radius: var(--ma-radius-sm);
+  background-color: rgba(192, 132, 252, 0.06);
+  padding: 0.75rem;
+}
+.ma-live-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  flex-shrink: 0;
+  background: var(--ma-status-emotion);
+  box-shadow: var(--ma-glow-emotion);
+  animation: ma-live-pulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+@keyframes ma-live-pulse {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
 }
 
 .tracking-widest-plus {
