@@ -19,6 +19,15 @@ import {
 } from "lucide-react";
 import { createDjEngine } from "../audio/djEngine";
 import { setTheaterContext, clearTheaterContext } from "@/lib/theaterContext";
+import {
+  getEngine,
+  getLive,
+  getLiveMeta,
+  adopt,
+  detach,
+  registerPageControl,
+  clearPageControl,
+} from "@/lib/persistAudio";
 import { remainingPlaybackSeconds, startDeckTransition } from "../audio/deckTransition";
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL || "";
@@ -802,7 +811,7 @@ export default function MusicLibrary({ mode = "library" }) {
 
   const ensureAudioGraph = useCallback((audio, gainValue = volumeRef.current) => {
     if (!audio || typeof window === "undefined") return null;
-    if (!djEngineRef.current) djEngineRef.current = createDjEngine();
+    if (!djEngineRef.current) djEngineRef.current = getEngine();
     const deckId = audio.dataset.deckId || (audio === deckBRef.current || audio === incomingMixAudioRef.current ? "B" : "A");
     const engineGraph = djEngineRef.current.connectElement(deckId, audio);
     if (engineGraph?.context) {
@@ -845,13 +854,25 @@ export default function MusicLibrary({ mode = "library" }) {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !activeTrack?.id) return;
+    const persisted = getLive();
+    const persistedTrackId = getLiveMeta()?.trackId;
+    if (persisted && persistedTrackId === activeTrack.id) {
+      liveAudioRef.current = persisted;
+      setCurrentTime(persisted.currentTime || 0);
+      if (Number.isFinite(persisted.duration) && persisted.duration > 0) setDuration(persisted.duration);
+      setIsPlaying(!persisted.paused && !persisted.ended);
+      return;
+    }
     const shouldAutoplay = pendingAutoplayRef.current;
     pendingAutoplayRef.current = false;
     const liveAudio = liveAudioRef.current;
     const liveIsSameTrack = liveAudio && incomingMixAudioRef.current === liveAudio && liveAudio.dataset.trackId === activeTrack.id;
     if (liveIsSameTrack) return;
     cancelTransition();
-    if (liveAudio && liveAudio !== audio) liveAudio.pause();
+    if (liveAudio && liveAudio !== audio) {
+      if (getLive() === liveAudio) detach();
+      liveAudio.pause();
+    }
     incomingMixAudioRef.current = null;
     liveDeckRef.current = "A";
     djEngineRef.current?.setCrossfader(0);
@@ -888,7 +909,7 @@ export default function MusicLibrary({ mode = "library" }) {
     return () => {
       transitionRef.current?.();
       incomingMixAudioRef.current?.pause();
-      liveAudioRef.current?.pause();
+      // Live deck continuity is handled by the persist-audio mount effect (adopt, not pause).
     };
   }, []);
 
@@ -1020,7 +1041,7 @@ export default function MusicLibrary({ mode = "library" }) {
         ...current,
         [deckId]: { ...current[deckId], [field]: numericValue },
       };
-      const engine = djEngineRef.current || createDjEngine();
+      const engine = djEngineRef.current || getEngine();
       djEngineRef.current = engine;
       if (field === "filter") {
         engine.setFilter(deckId, numericValue);
@@ -1518,7 +1539,7 @@ export default function MusicLibrary({ mode = "library" }) {
       setCurrentTime(liveAudio.currentTime || 0);
     };
     if (snapToBeat && !liveAudio.paused) {
-      const engine = djEngineRef.current || createDjEngine();
+      const engine = djEngineRef.current || getEngine();
       djEngineRef.current = engine;
       const armed = engine.armAction({
         track: activeTrack,
@@ -1543,7 +1564,7 @@ export default function MusicLibrary({ mode = "library" }) {
       setCurrentTime(liveAudio.currentTime || 0);
     };
     if (snapToBeat && !liveAudio.paused) {
-      const engine = djEngineRef.current || createDjEngine();
+      const engine = djEngineRef.current || getEngine();
       djEngineRef.current = engine;
       const armed = engine.armAction({
         track: activeTrack,
@@ -1705,10 +1726,52 @@ export default function MusicLibrary({ mode = "library" }) {
       id: activeTrack.id,
       title: activeTrack.display_title,
       bpm: activeTrack.analysis?.bpm ?? undefined,
+      artworkUrl: artworkSrc(activeTrack),
+      analysis: {
+        status: activeTrack.analysis?.status,
+        energy_label: activeTrack.analysis?.energy_label,
+        bpm: activeTrack.analysis?.bpm,
+        key: activeTrack.analysis?.key,
+        beat_confidence: activeTrack.analysis?.beat_confidence,
+      },
       type: "library",
     });
-    return clearTheaterContext;
+    return () => {
+      if (!getLive()) clearTheaterContext();
+    };
   }, [activeTrack, isPlaying]);
+
+  useEffect(() => {
+    const persisted = getLive();
+    if (persisted) {
+      liveAudioRef.current = persisted;
+      const meta = getLiveMeta();
+      if (meta?.trackId) setActiveId(meta.trackId);
+      setCurrentTime(persisted.currentTime || 0);
+      if (Number.isFinite(persisted.duration) && persisted.duration > 0) setDuration(persisted.duration);
+      setIsPlaying(!persisted.paused && !persisted.ended);
+    }
+    registerPageControl({
+      toggle: togglePlayback,
+      skipNext: skipToNextLive,
+      seek,
+    });
+    return () => {
+      const liveAudio = getLiveAudio() || getLive();
+      const meta = getLiveMeta();
+      if (liveAudio && (!liveAudio.paused || isPlaying || getLive())) {
+        adopt(liveAudio, {
+          trackId: activeTrack?.id || meta?.trackId,
+          title: activeTrack?.display_title || meta?.title,
+          artworkUrl: artworkSrc(activeTrack) || meta?.artworkUrl || null,
+          bpm: activeTrack?.analysis?.bpm ?? meta?.bpm,
+          type: "library",
+        });
+      }
+      clearPageControl();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <main className={`music-workstation ${isAutoMode ? "auto-mode" : "manual-mode"} ${djToolsOpen ? "dj-open" : "dj-closed"} view-${activeView}`}>

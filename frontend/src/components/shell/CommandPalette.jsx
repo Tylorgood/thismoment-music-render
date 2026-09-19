@@ -64,6 +64,7 @@ export default function CommandPalette({ open, onOpenChange, items, albums }) {
                     value={item.label}
                     keywords={item.keywords || []}
                     onSelect={() => handleSelect(item)}
+                    className="ma-motive ma-motive-press"
                   >
                     <Icon className="mr-2 h-4 w-4 ma-muted" />
                     <span>{item.label}</span>

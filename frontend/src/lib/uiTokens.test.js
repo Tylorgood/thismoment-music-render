@@ -61,6 +61,9 @@ const REQUIRED_TOKENS = [
   "--ma-ease",
   "--ma-glow-gold",
   "--ma-glow-emotion",
+  "--ma-z-ambient",
+  "--ma-ambient-duration",
+  "--ma-ambient-fallback",
 ];
 
 describe("Music Arcade token contract (index.css)", () => {
@@ -89,5 +92,21 @@ describe("Music Arcade token contract (index.css)", () => {
   it("does not duplicate :root token blocks", () => {
     const matches = css.match(/:root\s*{/g) || [];
     expect(matches.length).toBe(1);
+  });
+
+  it("declares the ambient lighting layer styles with a reduced-motion guard", () => {
+    expect(css).toContain(".ma-ambient-layer");
+    expect(css).toContain(".ma-ambient-orb");
+    expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(css).toContain("mix-blend-mode: screen");
+    expect(css).toContain("animation: none");
+  });
+
+  it("declares the 8B motive grammar with a single kill switch", () => {
+    expect(css).toContain(".ma-motive");
+    expect(css).toContain("@keyframes ma-motion-press");
+    expect(css).toContain("@keyframes ma-motion-sheen");
+    expect(css).toContain("@keyframes ma-motion-coin");
+    expect(css).toContain(".ma-motive-coin");
   });
 });

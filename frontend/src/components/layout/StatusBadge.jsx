@@ -11,7 +11,14 @@ const TONES = {
 
 export default function StatusBadge({ tone = "neutral", label, dot = true, className }) {
   return (
-    <span className={cn("ma-badge", TONES[tone] || TONES.neutral, className)}>
+    <span
+      className={cn(
+        "ma-badge",
+        tone === "emotion" && "ma-motive ma-motive-glow-emotion",
+        TONES[tone] || TONES.neutral,
+        className
+      )}
+    >
       {dot && <span className="ma-badge-dot" aria-hidden="true" />}
       <span>{label}</span>
     </span>

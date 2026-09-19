@@ -11,7 +11,7 @@ export default function PageNav({ items, activeKey, onSelect, className }) {
             onClick={() => onSelect?.(item.key)}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "ma-ring-focus relative -mb-px px-3 py-2.5 text-sm transition-colors",
+              "ma-motive ma-motive-press ma-ring-focus relative -mb-px px-3 py-2.5 text-sm transition-colors",
               active ? "text-slate-100" : "ma-muted hover:text-slate-200"
             )}
           >

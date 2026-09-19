@@ -9,6 +9,7 @@ import AlbumBuilder from "@/pages/AlbumBuilder";
 import DjSetBuilder from "@/pages/DjSetBuilder";
 import Placeholder from "@/pages/Placeholder";
 import AppShell from "@/components/shell/AppShell";
+import AmbientLayer from "@/components/shell/AmbientLayer";
 import { Toaster } from "@/components/ui/sonner";
 
 function App() {
@@ -31,6 +32,7 @@ function App() {
   return (
     <div className="App">
       <BrowserRouter>
+        <AmbientLayer />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route element={<AppShell />}>
@@ -60,6 +62,7 @@ function App() {
       <Toaster
         position="bottom-center"
         theme="dark"
+        classNames={{ success: "ma-motive-coin" }}
         toastOptions={{
           style: {
             background: "#121110",

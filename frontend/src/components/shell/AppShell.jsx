@@ -5,10 +5,11 @@ import Sidebar from "@/components/shell/Sidebar";
 import ShellBreadcrumbs from "@/components/shell/ShellBreadcrumbs";
 import CommandPalette from "@/components/shell/CommandPalette";
 import ContextSidebar from "@/components/shell/ContextSidebar";
+import NowPlayingBar from "@/components/shell/NowPlayingBar";
 import { PRIMARY_NAV, ALBUM_SECTIONS, routeToBreadcrumbs } from "@/lib/shellNav";
 import { listProjects, getProjectToken } from "@/lib/albumProjects";
 import { useAlbumContext } from "@/lib/albumContext";
-import { setTheaterContext } from "@/lib/theaterContext";
+import { setTheaterContext, getTheaterContext } from "@/lib/theaterContext";
 import { Disc3, Music2, Sparkles } from "lucide-react";
 
 const PALETTE_GROUPS = [
@@ -33,19 +34,19 @@ export default function AppShell() {
   const section = crumbs[crumbs.length - 1];
 
   useEffect(() => {
-    setTheaterContext((current) => ({
-      ...(current || {}),
+    const current = getTheaterContext();
+    setTheaterContext({
+      ...(current && typeof current === "object" ? current : {}),
       albumName: albumContext?.name,
       section: albumContext?.id ? (section?.label || "Overview") : undefined,
-    }));
+    });
     return () => {
-      setTheaterContext((current) => {
-        if (!current?.albumName) return current;
-        const next = { ...current };
-        delete next.albumName;
-        delete next.section;
-        return next;
-      });
+      const live = getTheaterContext();
+      if (!live || typeof live !== "object" || !live.albumName) return;
+      const next = { ...live };
+      delete next.albumName;
+      delete next.section;
+      setTheaterContext(next);
     };
   }, [albumContext?.id, albumContext?.name, section?.label]);
 
@@ -91,31 +92,34 @@ export default function AppShell() {
   }, [handleKeyDown]);
 
   return (
-    <div className="flex min-h-screen bg-[var(--ma-chrome)] text-slate-100">
-      <Sidebar
-        items={PRIMARY_NAV}
-        contextTitle={albumContext?.name ?? undefined}
-        contextItems={contextItems}
-      />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b ma-hairline bg-[var(--ma-surface-1)] px-5">
-          <ShellBreadcrumbs crumbs={crumbs} />
-          <button
-            onClick={() => setPaletteOpen(true)}
-            className="ma-ring-focus inline-flex items-center gap-2 rounded-sm border ma-hairline-strong px-2.5 py-1.5 text-sm ma-muted transition-colors hover:bg-white/5 hover:text-slate-200"
-          >
-            <Search className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Search</span>
-            <kbd className="rounded-sm border ma-hairline px-1 font-mono text-[0.65rem] ma-faint">
-              ⌘K
-            </kbd>
-          </button>
-        </header>
-        <main className="min-w-0 flex-1">
-          <Outlet />
-        </main>
+    <div className="flex min-h-screen flex-col bg-[var(--ma-chrome)] text-slate-100">
+      <div className="flex min-h-screen flex-1">
+        <Sidebar
+          items={PRIMARY_NAV}
+          contextTitle={albumContext?.name ?? undefined}
+          contextItems={contextItems}
+        />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-14 shrink-0 items-center justify-between border-b ma-hairline bg-[var(--ma-surface-1)] px-5">
+            <ShellBreadcrumbs crumbs={crumbs} />
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="ma-ring-focus inline-flex items-center gap-2 rounded-sm border ma-hairline-strong px-2.5 py-1.5 text-sm ma-muted transition-colors hover:bg-white/5 hover:text-slate-200"
+            >
+              <Search className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Search</span>
+              <kbd className="rounded-sm border ma-hairline px-1 font-mono text-[0.65rem] ma-faint">
+                ⌘K
+              </kbd>
+            </button>
+          </header>
+          <main className="min-w-0 flex-1">
+            <Outlet />
+          </main>
+        </div>
+        <ContextSidebar />
       </div>
-      <ContextSidebar />
+      <NowPlayingBar />
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
