@@ -9,6 +9,7 @@ let tickId = null;
 let lastAdoptedElement = null;
 let lastPulseAt = 0;
 let publishHook = null;
+let publishCount = 0;
 const EQ_BANDS = 5;
 const EQ_BAND_BIAS = [0.9, 1, 1.1, 0.95, 0.75];
 
@@ -41,6 +42,7 @@ export function clearPageControl() {
 
 function publish() {
   if (!live) return;
+  publishCount += 1;
   const playing = !live.paused && !live.ended;
   const payload = {
     playing,
@@ -55,10 +57,6 @@ function publish() {
 
 export function adopt(audio, meta = null) {
   if (!audio || typeof window === "undefined") return;
-  if (lastAdoptedElement && lastAdoptedElement !== audio) {
-    clearTimeout(lastAdoptedElement.__tick);
-    lastAdoptedElement = null;
-  }
   live = audio;
   liveMeta = meta ? { ...meta } : null;
   lastAdoptedElement = audio;
@@ -166,4 +164,19 @@ export function resetSession() {
   lastPulseAt = 0;
   pageControl = null;
   publishHook = null;
+  publishCount = 0;
+}
+
+if (typeof window !== "undefined") {
+  window.__maAudioDebug = {
+    live: () => live,
+    meta: () => (liveMeta ? { ...liveMeta } : null),
+    isPlaying: () => Boolean(live && !live.paused && !live.ended),
+    currentTime: () => (live ? live.currentTime : null),
+    duration: () => (live ? live.duration : null),
+    isPaused: () => (live ? live.paused : null),
+    skippable: () => hasControls(),
+    enginePresent: () => Boolean(engine),
+    publishCount: () => publishCount,
+  };
 }
