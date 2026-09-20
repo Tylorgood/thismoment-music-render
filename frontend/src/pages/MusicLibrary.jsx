@@ -30,6 +30,7 @@ import {
   registerPageControl,
   clearPageControl,
 } from "@/lib/persistAudio";
+import { attachEngine } from "@/lib/reactiveBus";
 import { remainingPlaybackSeconds, startDeckTransition } from "../audio/deckTransition";
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL || "";
@@ -842,6 +843,7 @@ export default function MusicLibrary({ mode = "library" }) {
     if (!djEngineRef.current) djEngineRef.current = getEngine();
     const deckId = audio.dataset.deckId || (audio === deckBRef.current || audio === incomingMixAudioRef.current ? "B" : "A");
     const engineGraph = djEngineRef.current.connectElement(deckId, audio);
+    attachEngine(djEngineRef.current);
     if (engineGraph?.context) {
       audioContextRef.current = engineGraph.context;
       djEngineRef.current.setTrim(deckId, 0);
