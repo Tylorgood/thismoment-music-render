@@ -10,6 +10,8 @@ let lastAdoptedElement = null;
 let lastPulseAt = 0;
 let publishHook = null;
 let publishCount = 0;
+let deckElement = null;
+let hostElement = null;
 const EQ_BANDS = 5;
 const EQ_BAND_BIAS = [0.9, 1, 1.1, 0.95, 0.75];
 
@@ -21,6 +23,42 @@ export function getEngine() {
 
 export function getLive() {
   return live;
+}
+
+function ensureHost() {
+  if (typeof document === "undefined") return null;
+  if (hostElement && document.body.contains(hostElement)) return hostElement;
+  hostElement = document.getElementById("ma-audio-host");
+  if (!hostElement) {
+    hostElement = document.createElement("div");
+    hostElement.id = "ma-audio-host";
+    hostElement.setAttribute("aria-hidden", "true");
+    hostElement.style.cssText = "position:fixed;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;";
+    document.body.appendChild(hostElement);
+  }
+  return hostElement;
+}
+
+export function getDeckElement() {
+  if (typeof document === "undefined") return null;
+  if (!deckElement) {
+    deckElement = new Audio();
+    deckElement.preload = "metadata";
+    deckElement.controls = true;
+    deckElement.dataset.deckId = "A";
+    deckElement.__persistent = true;
+  }
+  if (!deckElement.isConnected) {
+    const host = ensureHost();
+    if (host) host.appendChild(deckElement);
+  }
+  return deckElement;
+}
+
+export function parkDeckElement() {
+  if (!deckElement) return;
+  const host = ensureHost();
+  if (host && deckElement.parentNode !== host) host.appendChild(deckElement);
 }
 
 export function getLiveMeta() {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Heart,
   Import,
@@ -17,12 +17,13 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { createDjEngine } from "../audio/djEngine";
 import { setTheaterContext, clearTheaterContext } from "@/lib/theaterContext";
 import {
   getEngine,
   getLive,
   getLiveMeta,
+  getDeckElement,
+  parkDeckElement,
   adopt,
   detach,
   registerPageControl,
@@ -418,6 +419,7 @@ function readStoredJson(key, fallback) {
 
 export default function MusicLibrary({ mode = "library" }) {
   const audioRef = useRef(null);
+  const audioSlotRef = useRef(null);
   const deckBRef = useRef(null);
   const incomingMixAudioRef = useRef(null);
   const transitionRef = useRef(null);
@@ -434,6 +436,7 @@ export default function MusicLibrary({ mode = "library" }) {
   const liveDeckRef = useRef("A");
   const recentTrackIdsRef = useRef([]);
   const lastLoggedPlayRef = useRef({ id: null, at: 0 });
+  const latestRef = useRef({});
   const [config, setConfig] = useState(null);
   const [tracks, setTracks] = useState([]);
   const [stats, setStats] = useState(null);
@@ -878,6 +881,9 @@ export default function MusicLibrary({ mode = "library" }) {
     djEngineRef.current?.setCrossfader(0);
     setCrossfader(0);
     liveAudioRef.current = audio;
+    if (!audio.src || !audio.src.endsWith(`/tracks/${activeTrack.id}/audio`)) {
+      audio.src = `${API_BASE}/api/music/tracks/${activeTrack.id}/audio`;
+    }
     audio.load();
     if (!shouldAutoplay) return;
 
@@ -1742,6 +1748,67 @@ export default function MusicLibrary({ mode = "library" }) {
   }, [activeTrack, isPlaying]);
 
   useEffect(() => {
+    latestRef.current = { activeTrack, isAutoMode, isPlaying, playbackRate, preservePitch, recordPlay, fadeToNextTrack, handleTimeUpdate };
+  });
+
+  useLayoutEffect(() => {
+    const audio = getDeckElement();
+    if (!audio) return;
+    audioRef.current = audio;
+    if (audioSlotRef.current && audio.parentNode !== audioSlotRef.current) {
+      audioSlotRef.current.appendChild(audio);
+    }
+    return () => {
+      parkDeckElement();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const audio = getDeckElement();
+    if (!audio) return;
+    const onPlay = () => {
+      setIsPlaying(true);
+      const track = latestRef.current.activeTrack;
+      if (track) latestRef.current.recordPlay?.(track);
+    };
+    const onPause = (event) => {
+      if (event.currentTarget === getLiveAudio() && !fadeStartedRef.current) setIsPlaying(false);
+    };
+    const onLoadedMetadata = (event) => {
+      if (event.currentTarget !== getLiveAudio()) return;
+      const loadedDuration = event.currentTarget.duration;
+      if (Number.isFinite(loadedDuration)) setDuration(loadedDuration);
+      const pitch = latestRef.current.preservePitch ?? true;
+      event.currentTarget.playbackRate = latestRef.current.playbackRate ?? 1;
+      event.currentTarget.preservesPitch = pitch;
+      event.currentTarget.mozPreservesPitch = pitch;
+      event.currentTarget.webkitPreservesPitch = pitch;
+    };
+    const onEnded = (event) => {
+      if (event.currentTarget !== getLiveAudio() || fadeStartedRef.current) return;
+      if (latestRef.current.isAutoMode) {
+        fadeStartedRef.current = false;
+        latestRef.current.fadeToNextTrack?.(true);
+      } else {
+        setIsPlaying(false);
+      }
+    };
+    const onTimeUpdate = () => latestRef.current.handleTimeUpdate?.();
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("loadedmetadata", onLoadedMetadata);
+    audio.addEventListener("ended", onEnded);
+    audio.addEventListener("timeupdate", onTimeUpdate);
+    return () => {
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("timeupdate", onTimeUpdate);
+    };
+  }, [getLiveAudio]);
+
+  useEffect(() => {
     const persisted = getLive();
     if (persisted) {
       liveAudioRef.current = persisted;
@@ -1759,12 +1826,13 @@ export default function MusicLibrary({ mode = "library" }) {
     return () => {
       const liveAudio = getLiveAudio() || getLive();
       const meta = getLiveMeta();
-      if (liveAudio && (!liveAudio.paused || isPlaying || getLive())) {
+      const current = latestRef.current;
+      if (liveAudio && (!liveAudio.paused || current.isPlaying || getLive())) {
         adopt(liveAudio, {
-          trackId: activeTrack?.id || meta?.trackId,
-          title: activeTrack?.display_title || meta?.title,
-          artworkUrl: artworkSrc(activeTrack) || meta?.artworkUrl || null,
-          bpm: activeTrack?.analysis?.bpm ?? meta?.bpm,
+          trackId: current.activeTrack?.id || meta?.trackId,
+          title: current.activeTrack?.display_title || meta?.title,
+          artworkUrl: artworkSrc(current.activeTrack) || meta?.artworkUrl || null,
+          bpm: current.activeTrack?.analysis?.bpm ?? meta?.bpm,
           type: "library",
         });
       }
@@ -1939,40 +2007,7 @@ export default function MusicLibrary({ mode = "library" }) {
                 </button>
               </div>
 
-              <audio
-                ref={audioRef}
-                data-deck-id="A"
-                src={`${API_BASE}/api/music/tracks/${activeTrack.id}/audio`}
-                onPlay={() => {
-                  setIsPlaying(true);
-                  recordPlay(activeTrack);
-                }}
-                onPause={(event) => {
-                  if (event.currentTarget === getLiveAudio() && !fadeStartedRef.current) setIsPlaying(false);
-                }}
-                onLoadedMetadata={(event) => {
-                  if (event.currentTarget !== getLiveAudio()) return;
-                  const loadedDuration = event.currentTarget.duration;
-                  if (Number.isFinite(loadedDuration)) {
-                    setDuration(loadedDuration);
-                  }
-                  event.currentTarget.playbackRate = playbackRate;
-                  event.currentTarget.preservesPitch = preservePitch;
-                  event.currentTarget.mozPreservesPitch = preservePitch;
-                  event.currentTarget.webkitPreservesPitch = preservePitch;
-                }}
-                onEnded={(event) => {
-                  if (event.currentTarget !== getLiveAudio() || fadeStartedRef.current) return;
-                  if (isAutoMode) {
-                    fadeStartedRef.current = false;
-                    fadeToNextTrack(true);
-                  } else {
-                    setIsPlaying(false);
-                  }
-                }}
-                onTimeUpdate={handleTimeUpdate}
-                controls
-              />
+              <div ref={audioSlotRef} className="deck-audio-slot" />
 
               <div className="next-preview">
                 <span>Up next</span>
