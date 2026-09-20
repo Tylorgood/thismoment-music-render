@@ -32,6 +32,7 @@ import {
 import { remainingPlaybackSeconds, startDeckTransition } from "../audio/deckTransition";
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL || "";
+const waveformCache = new Map();
 const RATINGS = [
   { value: "S", label: "Exceptional" },
   { value: "A", label: "Keeper" },
@@ -764,6 +765,11 @@ export default function MusicLibrary({ mode = "library" }) {
 
   useEffect(() => {
     if (!activeTrack?.id) return;
+    const cachedBars = waveformCache.get(activeTrack.id);
+    if (cachedBars) {
+      setWaveformBars(cachedBars);
+      return;
+    }
     let cancelled = false;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
@@ -794,7 +800,10 @@ export default function MusicLibrary({ mode = "library" }) {
           return { height, color };
         });
         await context.close();
-        if (!cancelled) setWaveformBars(bars);
+        if (!cancelled) {
+          waveformCache.set(activeTrack.id, bars);
+          setWaveformBars(bars);
+        }
       } catch {
         if (!cancelled) setWaveformBars([]);
       }
