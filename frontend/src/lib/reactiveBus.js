@@ -21,7 +21,72 @@ export const TIME_CONSTANTS = {
   shimmer: 0.14,
   penetrate: 3,
   transient: 0.18,
+  spectralBias: 5,
+  airiness: 4,
+  sustain: 4,
 };
+
+export const SPECTRUM_BUCKETS = 26;
+export const SPECTRUM_BASE = 20;
+export const SPECTRUM_TOP = 16000;
+const SPECTRUM_ATTACK = 0.03;
+const SPECTRUM_RELEASE = 0.28;
+
+export function spectrumRanges(count = SPECTRUM_BUCKETS, lo = SPECTRUM_BASE, hi = SPECTRUM_TOP) {
+  const out = [];
+  const logLo = Math.log(lo);
+  const logHi = Math.log(hi);
+  for (let i = 0; i < count; i += 1) {
+    const a = logLo + (i / count) * (logHi - logLo);
+    const b = logLo + ((i + 1) / count) * (logHi - logLo);
+    out.push([Math.exp(a), Math.exp(b)]);
+  }
+  return out;
+}
+
+export const MOOD_LABELS = ["IMMERSION", "CREATIVITY", "FLOW", "HIGHER STATE", "JUST MUSIC"];
+
+export const MOOD_ARCHETYPES = [
+  { label: "IMMERSION", energy: 0.45, bass: 0.5, mid: 0.62, air: 0.25, transientDensity: 0.12, sustain: 0.55, zeroDistance: 0.55, emotion: 0.5 },
+  { label: "CREATIVITY", energy: 0.55, bass: 0.35, mid: 0.45, air: 0.75, transientDensity: 0.5, sustain: 0.45, zeroDistance: 0.5, emotion: 0.7 },
+  { label: "FLOW", energy: 0.8, bass: 0.55, mid: 0.6, air: 0.45, transientDensity: 0.3, sustain: 0.65, zeroDistance: 0.55, emotion: 0.55 },
+  { label: "HIGHER STATE", energy: 0.95, bass: 0.7, mid: 0.55, air: 0.7, transientDensity: 0.8, sustain: 0.85, zeroDistance: 0.5, emotion: 0.85 },
+  { label: "JUST MUSIC", energy: 0.2, bass: 0.3, mid: 0.4, air: 0.2, transientDensity: 0.08, sustain: 0.12, zeroDistance: 0.35, emotion: 0.3 },
+];
+
+const MOOD_WEIGHTS = { energy: 1, bass: 0.7, mid: 0.55, air: 0.8, transientDensity: 0.8, sustain: 0.9, zeroDistance: 0.4, emotion: 0.6 };
+
+export function moodScore(signals, archetype) {
+  let weighted = 0;
+  let weightSum = 0;
+  for (const key of Object.keys(MOOD_WEIGHTS)) {
+    const target = archetype[key] ?? 0.5;
+    const value = signals[key] ?? 0.5;
+    const diff = Math.abs(value - target);
+    const width = key === "zeroDistance" ? 0.3 : 0.2;
+    const weight = MOOD_WEIGHTS[key];
+    weighted += weight * Math.exp(-((diff * diff) / (2 * width * width)));
+    weightSum += weight;
+  }
+  return weightSum ? weighted / weightSum : 0;
+}
+
+export function deriveMood(signals, prevLabel = null) {
+  const scores = MOOD_ARCHETYPES.map((archetype) => moodScore(signals, archetype));
+  let bestIndex = 0;
+  for (let i = 1; i < scores.length; i += 1) {
+    if (scores[i] > scores[bestIndex]) bestIndex = i;
+  }
+  const ordered = [...scores].sort((a, b) => b - a);
+  const confidence = scores[bestIndex];
+  const margin = confidence - (ordered[1] || 0);
+  return {
+    label: !prevLabel || confidence >= 0.55 ? MOOD_LABELS[bestIndex] : prevLabel,
+    confidence,
+    margin,
+    scores,
+  };
+}
 
 const MAX_BANDS = Object.keys(BAND_RANGES).length;
 
@@ -41,11 +106,19 @@ const BASE_STATE = {
   penetrate: 0.4,
   playing: false,
   frame: 0,
+  spectralBias: 0,
+  airiness: 0,
+  transientDensity: 0,
+  sustain: 0,
+  moodLabel: null,
+  moodConfidence: 0,
 };
+
+const SPECTRUM_RANGES = spectrumRanges();
+let spectrumState = new Array(SPECTRUM_BUCKETS).fill(0);
 
 let analyser = null;
 let freqData = null;
-let timeData = null;
 let attachedMaster = null;
 let sampleRate = 44100;
 let fftSize = 2048;
@@ -57,7 +130,9 @@ let startedAt = 0;
 let cssRoot = null;
 let metadata = { bpm: 0, energy_label: null, firstBeat: 0, zeroDistance: null, emotionT: null };
 let runningAvg = 0;
-const state = { ...BASE_STATE };
+let onsetTimes = [];
+let moodState = { label: null, since: 0 };
+const state = { ...BASE_STATE, spectrum: new Array(SPECTRUM_BUCKETS).fill(0) };
 const subscribers = new Set();
 
 function isBrowser() {
@@ -99,8 +174,24 @@ export function bandVector(data, sr, size) {
   return bands;
 }
 
-export function specShimmer(air, strength = 1) {
-  return clamp01(air * (0.6 + 0.4 * clamp01(strength)));
+export function spectrumVector(data, sr, size, ranges = SPECTRUM_RANGES) {
+  return ranges.map((range) => bandAverage(data, sr, size, range));
+}
+
+function syntheticSpectrum() {
+  const bands = [state.bass, state.low, state.mid, state.high, state.air];
+  const anchors = [0, 0.18, 0.46, 0.78, 1];
+  const out = new Array(SPECTRUM_BUCKETS);
+  for (let i = 0; i < SPECTRUM_BUCKETS; i += 1) {
+    const f = SPECTRUM_BUCKETS === 1 ? 0 : i / (SPECTRUM_BUCKETS - 1);
+    let anchorIndex = 0;
+    while (anchorIndex < anchors.length - 2 && f > anchors[anchorIndex + 1]) anchorIndex += 1;
+    const a = anchors[anchorIndex];
+    const b = anchors[anchorIndex + 1];
+    const amount = b === a ? 0 : (f - a) / (b - a);
+    out[i] = bands[anchorIndex] * (1 - amount) + bands[anchorIndex + 1] * amount;
+  }
+  return out;
 }
 
 export function attachEngine(engine) {
@@ -116,7 +207,6 @@ export function attachEngine(engine) {
     analyser.fftSize = fftSize;
     analyser.smoothingTimeConstant = 0.62;
     freqData = new Uint8Array(analyser.frequencyBinCount);
-    timeData = new Uint8Array(analyser.fftSize);
     master.connect(analyser);
     attachedMaster = master;
     startedAt = context.currentTime || 0;
@@ -166,7 +256,11 @@ export function resetForTests() {
   stop();
   subscribers.clear();
   detachEngine();
+  spectrumState = new Array(SPECTRUM_BUCKETS).fill(0);
+  onsetTimes = [];
+  moodState = { label: null, since: 0 };
   Object.assign(state, BASE_STATE);
+  state.spectrum = new Array(SPECTRUM_BUCKETS).fill(0);
   metadata = { bpm: 0, energy_label: null, firstBeat: 0, zeroDistance: null, emotionT: null };
   runningAvg = 0;
 }
@@ -190,6 +284,7 @@ function step(dt) {
   let mid = 0;
   let high = 0;
   let air = 0;
+  let rawSpectrum = null;
 
   if (analyser && freqData) {
     analyser.getByteFrequencyData(freqData);
@@ -199,6 +294,7 @@ function step(dt) {
     mid = bands.mid;
     high = bands.high;
     air = bands.air;
+    rawSpectrum = spectrumVector(freqData, sampleRate, fftSize);
   } else if (state.playing) {
     const t = performance.now() / 1000;
     const bpm = Number(metadata.bpm) || 0;
@@ -208,6 +304,7 @@ function step(dt) {
     mid = 0.3 + 0.12 * Math.sin(t * 1.7);
     high = 0.22 + 0.1 * Math.sin(t * 3.3);
     air = 0.18 + 0.08 * Math.sin(t * 5.1);
+    rawSpectrum = syntheticSpectrum();
   }
 
   state.bass = env(state.bass, bass, dt, 0.05, TIME_CONSTANTS.bass);
@@ -215,6 +312,18 @@ function step(dt) {
   state.mid = env(state.mid, mid, dt, 0.06, TIME_CONSTANTS.mid);
   state.high = env(state.high, high, dt, 0.04, TIME_CONSTANTS.high);
   state.air = env(state.air, air, dt, 0.035, TIME_CONSTANTS.air);
+
+  if (rawSpectrum) {
+    for (let i = 0; i < SPECTRUM_BUCKETS; i += 1) {
+      const target = rawSpectrum[i] || 0;
+      spectrumState[i] = env(spectrumState[i], target, dt, SPECTRUM_ATTACK, SPECTRUM_RELEASE);
+    }
+  } else {
+    for (let i = 0; i < SPECTRUM_BUCKETS; i += 1) {
+      spectrumState[i] = env(spectrumState[i], 0, dt, SPECTRUM_ATTACK, SPECTRUM_RELEASE);
+    }
+  }
+  state.spectrum = spectrumState;
 
   const overall = (state.bass + state.low + state.mid + state.high + state.air) / MAX_BANDS;
   runningAvg = env(runningAvg, overall, dt, 0.5, 0.7);
@@ -236,6 +345,40 @@ function step(dt) {
   state.zeroDistance = env(state.zeroDistance, zTarget, dt, TIME_CONSTANTS.zeroDistance, TIME_CONSTANTS.zeroDistance);
 
   state.penetrate = env(state.penetrate, 0.32 + state.energy * 0.6, dt, TIME_CONSTANTS.penetrate, TIME_CONSTANTS.penetrate);
+
+  const mean = overall > 0.001 ? overall : 0.001;
+  const biasTarget = clamp01((state.bass - state.air) / mean / 1.6 + 0.5) * 2 - 1;
+  state.spectralBias = env(state.spectralBias, biasTarget, dt, TIME_CONSTANTS.spectralBias, TIME_CONSTANTS.spectralBias);
+  state.airiness = env(state.airiness, state.playing ? state.air : 0, dt, TIME_CONSTANTS.airiness, TIME_CONSTANTS.airiness);
+
+  const nowMs = performance.now();
+  if (transient > 0.15) onsetTimes.push(nowMs);
+  onsetTimes = onsetTimes.filter((t) => nowMs - t < 5000);
+  state.transientDensity = state.playing ? Math.min(1, onsetTimes.length / 12) : env(state.transientDensity, 0, dt, 3, TIME_CONSTANTS.sustain);
+
+  state.sustain = state.playing ? Math.min(600, state.sustain + dt) : Math.max(0, state.sustain - dt * TIME_CONSTANTS.sustain);
+
+  const decoded = deriveMood(
+    {
+      energy: state.energy,
+      bass: state.bass,
+      mid: state.mid,
+      air: state.airiness,
+      transientDensity: state.transientDensity,
+      sustain: state.playing ? clamp01(state.sustain / 90) : 0,
+      zeroDistance: state.zeroDistance,
+      emotion: state.mood,
+    },
+    moodState.label
+  );
+  if (decoded.label !== moodState.label) {
+    if (!moodState.label || nowMs - moodState.since > 6000) {
+      moodState.label = decoded.label;
+      moodState.since = nowMs;
+    }
+  }
+  state.moodLabel = moodState.label;
+  state.moodConfidence = decoded.confidence;
 
   const bpm = Number(metadata.bpm) || 0;
   if (bpm > 0 && state.playing) {
@@ -263,6 +406,10 @@ function publishCss() {
   style.setProperty("--ma-react-energy", state.energy.toFixed(3));
   style.setProperty("--ma-react-penetrate", state.penetrate.toFixed(3));
   style.setProperty("--ma-react-mood", state.mood.toFixed(3));
+  style.setProperty("--ma-react-spectral-bias", state.spectralBias.toFixed(3));
+  style.setProperty("--ma-react-airiness", state.airiness.toFixed(3));
+  style.setProperty("--ma-react-transient-density", state.transientDensity.toFixed(3));
+  style.setProperty("--ma-react-sustain", state.sustain.toFixed(3));
 }
 
 function debugSnapshot() {
@@ -271,6 +418,7 @@ function debugSnapshot() {
     attached: Boolean(analyser),
     mood: Number(state.mood.toFixed(3)),
     zeroDistance: Number(state.zeroDistance.toFixed(3)),
+    spectrumCount: state.spectrum.length,
   };
 }
 

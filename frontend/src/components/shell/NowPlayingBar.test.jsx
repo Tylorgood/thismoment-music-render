@@ -54,4 +54,18 @@ describe("NowPlayingBar (8C)", () => {
     expect(markup).toContain('aria-label="Skip to next track"');
     expect(markup).toContain('disabled');
   });
+
+  it("renders the real waveform seek strip and live badge (8H)", () => {
+    setTheaterContext({ playing: true, id: "T-004", title: "Flicker", bpm: 110, artworkUrl: "/cover/T-004.webp" });
+    const markup = renderBar();
+    expect(markup).toContain('data-testid="transport-waveform"');
+    expect(markup).toContain('role="slider"');
+    expect(markup).toContain(">Flicker<");
+    expect(markup).toContain("Live");
+  });
+
+  it("keeps the expanded transport hidden on first paint (8H)", () => {
+    setTheaterContext({ playing: true, id: "T-005", title: "Nova", type: "library" });
+    expect(renderBar()).not.toContain("ma-transport-expanded");
+  });
 });

@@ -1,5 +1,7 @@
 import { useTheaterContext } from "@/lib/theaterContext";
 import { energyFromLabel, pickEmotionColor } from "@/lib/ambient";
+import TheaterScope from "@/components/shell/TheaterScope";
+import MoodBand from "@/components/shell/MoodBand";
 
 function LiveRow({ track }) {
   return (
@@ -58,6 +60,18 @@ export default function ContextSidebar() {
             <span className="px-2">{marqueeSegment.repeat(3)}</span>
             <span className="px-2">{marqueeSegment.repeat(3)}</span>
           </div>
+        </div>
+      )}
+
+      {live && (
+        <div className="border-b ma-hairline px-4 py-3">
+          <TheaterScope />
+        </div>
+      )}
+
+      {live && (
+        <div className="border-b ma-hairline px-4 py-2">
+          <MoodBand />
         </div>
       )}
 

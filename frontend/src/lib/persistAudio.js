@@ -15,6 +15,9 @@ let deckElement = null;
 let hostElement = null;
 const EQ_BANDS = 5;
 const EQ_BAND_BIAS = [0.9, 1, 1.1, 0.95, 0.75];
+const WAVE_BUCKETS = 64;
+const wavePeaksCache = new Map();
+let transportState = null;
 
 export function getEngine() {
   if (typeof window === "undefined") return null;
@@ -135,6 +138,104 @@ export function detach() {
 
 export function forcePublish() {
   publish();
+}
+
+export function getWaveformPeaks(src) {
+  if (!src || typeof window === "undefined") return Promise.resolve(null);
+  if (wavePeaksCache.has(src)) return wavePeaksCache.get(src);
+  const promise = decodeWaveformPeaks(src)
+    .catch(() => null)
+    .then((peaks) => (Array.isArray(peaks) && peaks.length ? peaks : null));
+  wavePeaksCache.set(src, promise);
+  return promise;
+}
+
+async function decodeWaveformPeaks(src) {
+  const engine = getEngine();
+  const context = engine ? engine.getContext() : null;
+  if (!context) return null;
+  const response = await fetch(src);
+  if (!response.ok) return null;
+  const buffer = await response.arrayBuffer();
+  const audioBuffer = await context.decodeAudioData(buffer);
+  const channel = audioBuffer.getChannelData(0);
+  const bucketSize = Math.max(1, Math.floor(channel.length / WAVE_BUCKETS));
+  const peaks = new Array(WAVE_BUCKETS);
+  for (let index = 0; index < WAVE_BUCKETS; index += 1) {
+    const start = index * bucketSize;
+    const end = Math.min(channel.length, start + bucketSize);
+    let sum = 0;
+    let peak = 0;
+    let samples = 0;
+    for (let sampleIndex = start; sampleIndex < end; sampleIndex += 16) {
+      const value = Math.abs(channel[sampleIndex]);
+      sum += value * value;
+      peak = Math.max(peak, value);
+      samples += 1;
+    }
+    const rms = samples ? Math.sqrt(sum / samples) : 0;
+    peaks[index] = Math.max(0.04, Math.min(1, 0.18 + rms * 1.7 + peak * 0.9));
+  }
+  return peaks;
+}
+
+export function seekTo(fraction, duration) {
+  if (!live || !Number.isFinite(fraction)) return;
+  const targetSeconds = Math.max(0, Number(fraction) * (Number(duration) || live.duration || 0));
+  if (pageControl && typeof pageControl.seekTo === "function") {
+    pageControl.seekTo(targetSeconds);
+    return;
+  }
+  const clamped = Math.min(targetSeconds, live.duration || targetSeconds);
+  live.currentTime = clamped;
+  publish();
+}
+
+export function skipPrev() {
+  if (!live) return;
+  if (pageControl && typeof pageControl.skipPrev === "function") {
+    pageControl.skipPrev();
+    return;
+  }
+  if (live.currentTime > 3) {
+    live.currentTime = 0;
+  } else if (pageControl && typeof pageControl.seekBy === "function") {
+    pageControl.seekBy();
+  }
+  publish();
+}
+
+function loadTransportState() {
+  if (transportState) return transportState;
+  if (typeof window === "undefined") {
+    transportState = { shuffle: false, repeat: false };
+    return transportState;
+  }
+  transportState = { shuffle: false, repeat: false };
+  try {
+    const raw = window.localStorage.getItem("ma-transport-mode");
+    if (raw) transportState = { ...transportState, ...JSON.parse(raw) };
+  } catch {
+    void raw;
+  }
+  return transportState;
+}
+
+export function getTransportState() {
+  return { ...loadTransportState() };
+}
+
+export function setTransportState(patch) {
+  const next = { ...loadTransportState(), ...patch };
+  transportState = next;
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem("ma-transport-mode", JSON.stringify(next));
+    } catch {
+      void next;
+    }
+  }
+  return { ...next };
 }
 
 export function toggle() {

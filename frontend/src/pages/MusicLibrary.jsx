@@ -29,6 +29,7 @@ import {
   detach,
   registerPageControl,
   clearPageControl,
+  getTransportState,
 } from "@/lib/persistAudio";
 import { attachEngine } from "@/lib/reactiveBus";
 import { remainingPlaybackSeconds, startDeckTransition } from "../audio/deckTransition";
@@ -567,7 +568,6 @@ export default function MusicLibrary({ mode = "library" }) {
   }, [activeIndex, activeTrack, jumpAround, learnedPlays, playbackQueue, shuffleMix, smartMix]);
 
   const deckGlow = useMemo(() => {
-    const bpm = Number(activeTrack?.analysis?.bpm) || 0;
     const energyT = energyFromLabel(activeTrack?.analysis?.energy_label);
     const [r, g, b] = pickEmotionColor(energyT == null ? 0.6 : energyT);
     return {
@@ -575,7 +575,6 @@ export default function MusicLibrary({ mode = "library" }) {
       style: isPlaying
         ? {
             "--ma-deck-color": `rgba(${r}, ${g}, ${b}, 0.6)`,
-            "--ma-deck-beat": bpm > 0 ? `${Math.min(2.4, Math.max(0.6, 60 / bpm)).toFixed(2)}s` : "1.6s",
           }
         : undefined,
     };
@@ -1207,11 +1206,30 @@ export default function MusicLibrary({ mode = "library" }) {
   const skipToNextLive = useCallback(() => {
     if (fadeStartedRef.current) return;
     if (isPlaying && getLiveAudio() && !fadeStartedRef.current) {
+      const transport = getTransportState();
+      if (transport.repeat && activeTrack) {
+        selectTrack(activeTrack.id, true);
+        setStatus(`Repeat: ${activeTrack.display_title}`);
+        return;
+      }
+      if (transport.shuffle && playbackQueue.length > 1) {
+        const nextTrack = randomNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current);
+        if (nextTrack) {
+          selectTrack(nextTrack.id, true);
+          setStatus(`Shuffle: ${nextTrack.display_title}`);
+          return;
+        }
+      }
       fadeToNextTrack(true);
       return;
     }
     goRelative(1, true);
-  }, [fadeToNextTrack, getLiveAudio, goRelative, isPlaying]);
+  }, [activeTrack, fadeToNextTrack, getLiveAudio, goRelative, isPlaying, playbackQueue, selectTrack]);
+
+  const skipToPrevLive = useCallback(() => {
+    if (fadeStartedRef.current) return;
+    goRelative(-1, true);
+  }, [fadeStartedRef, goRelative]);
 
   const handleTimeUpdate = useCallback(() => {
     const audio = getLiveAudio();
@@ -1848,7 +1866,9 @@ export default function MusicLibrary({ mode = "library" }) {
     registerPageControl({
       toggle: togglePlayback,
       skipNext: skipToNextLive,
+      skipPrev: skipToPrevLive,
       seek,
+      seekTo,
     });
     return () => {
       const liveAudio = getLiveAudio() || getLive();

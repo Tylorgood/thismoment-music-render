@@ -40,9 +40,19 @@ describe("ContextSidebar (Theater rail)", () => {
     expect(markup).toContain("ma-scanline-live");
   });
 
+  it("mounts the spectrum scope canvas and mood band when live (8H)", () => {
+    setTheaterContext({ playing: true, id: "T-001", title: "Ember", bpm: 122 });
+    const markup = renderToStaticMarkup(<ContextSidebar />);
+    expect(markup).toContain("ma-theater-scope");
+    expect(markup).toContain("<canvas");
+    expect(markup).toContain('data-testid="theater-mood"');
+  });
+
   it("keeps the rail dark and ticker-free when idle (8D)", () => {
     const markup = renderToStaticMarkup(<ContextSidebar />);
     expect(markup).toContain('data-live="false"');
     expect(markup).not.toContain("ma-motive-marquee");
+    expect(markup).not.toContain("ma-theater-scope");
+    expect(markup).not.toContain('data-testid="theater-mood"');
   });
 });

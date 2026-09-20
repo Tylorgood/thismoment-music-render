@@ -621,21 +621,8 @@ body::before {
 .ma-deck-live {
   box-shadow:
     0 0 0 1px var(--ma-deck-color, rgba(192, 132, 252, 0.5)),
-    var(--ma-glow-emotion);
-  animation: ma-motion-throb var(--ma-deck-beat, 1.6s) var(--ma-ease) infinite;
-}
-@keyframes ma-motion-throb {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 1px rgba(192, 132, 252, 0.35),
-      0 0 18px rgba(192, 132, 252, 0.22);
-  }
-  50% {
-    box-shadow:
-      0 0 0 1px rgba(192, 132, 252, 0.7),
-      0 0 34px rgba(192, 132, 252, 0.45);
-  }
+    0 0 calc(10px + var(--ma-react-bass, 0) * 28px) var(--ma-deck-color, rgba(192, 132, 252, 0.35));
+  filter: brightness(calc(0.94 + var(--ma-react-bass, 0) * 0.5));
 }
 
 .ma-journey-fade {
@@ -658,9 +645,14 @@ body::before {
   .ma-facade-spotlight,
   .ma-facade-panel,
   .ma-facade-dissolve,
-  .ma-deck-live {
+  .ma-deck-live,
+  .ma-live-dot {
     animation: none !important;
     transition: none !important;
+  }
+  .ma-deck-live {
+    box-shadow: 0 0 0 1px var(--ma-deck-color, rgba(192, 132, 252, 0.5));
+    filter: none;
   }
 }
 
@@ -841,4 +833,109 @@ body::before {
   * {
     border-color: rgba(255, 255, 255, 0.08);
   }
+}
+
+/* Phase 8H - theater rail nervous system + hero transport */
+.ma-theater-scope {
+  user-select: none;
+}
+.ma-theater-scope canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: none;
+}
+
+.ma-mood-band {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.ma-mood-key {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ma-fg-faint);
+}
+.ma-mood-value {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.ma-mood-confidence {
+  margin-left: auto;
+  font-family: var(--ma-font-mono);
+  font-size: 0.5625rem;
+}
+
+.ma-waveform-strip {
+  display: block;
+  max-width: 100%;
+  cursor: ew-resize;
+  touch-action: none;
+  border-bottom: 1px solid var(--ma-line);
+}
+
+.ma-transport-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.ma-transport-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.375rem;
+  border-radius: var(--ma-radius-sm);
+  color: var(--ma-fg-faint);
+}
+.ma-transport-controls button:hover:not(:disabled) {
+  color: var(--ma-fg);
+}
+.ma-transport-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.ma-transport-play {
+  color: var(--ma-status-emotion);
+}
+.ma-transport-controls-lg {
+  gap: 0.5rem;
+}
+.ma-transport-play-lg {
+  padding: 0.5rem !important;
+}
+
+.ma-transport-expanded {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 56px;
+  z-index: 40;
+  border-top: 1px solid var(--ma-line);
+  background: color-mix(in srgb, var(--ma-surface-1) 86%, transparent);
+  backdrop-filter: blur(14px);
+}
+.ma-transport-expanded-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.ma-volume-slider {
+  accent-color: var(--ma-status-emotion);
+  cursor: pointer;
+}
+
+.ma-live-badge {
+  white-space: nowrap;
+}
+.ma-live-badge .ma-live-dot {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  background: var(--ma-status-emotion);
+  box-shadow: 0 0 8px var(--ma-status-emotion);
 }
