@@ -10,6 +10,7 @@ import DjSetBuilder from "@/pages/DjSetBuilder";
 import Placeholder from "@/pages/Placeholder";
 import AppShell from "@/components/shell/AppShell";
 import AmbientLayer from "@/components/shell/AmbientLayer";
+import ArcadeEnvironment from "@/components/shell/ArcadeEnvironment";
 import { Toaster } from "@/components/ui/sonner";
 
 function App() {
@@ -33,6 +34,7 @@ function App() {
     <div className="App">
       <BrowserRouter>
         <AmbientLayer />
+        <ArcadeEnvironment />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route element={<AppShell />}>

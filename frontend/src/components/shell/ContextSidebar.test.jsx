@@ -28,4 +28,21 @@ describe("ContextSidebar (Theater rail)", () => {
     expect(markup).toContain(">Love<");
     expect(markup).toContain("Album preview");
   });
+
+  it("lights the rail marquee and tint when the stage is live (8D)", () => {
+    setTheaterContext({ playing: true, id: "T-001", title: "Ember", bpm: 122, analysis: { energy_label: "high" } });
+    const markup = renderToStaticMarkup(<ContextSidebar />);
+    expect(markup).toContain("ma-scene-rail");
+    expect(markup).toContain('data-live="true"');
+    expect(markup).toContain("ma-motive-marquee");
+    expect(markup).toContain("NOW SHOWING");
+    expect(markup).toContain("122 BPM");
+    expect(markup).toContain("ma-scanline-live");
+  });
+
+  it("keeps the rail dark and ticker-free when idle (8D)", () => {
+    const markup = renderToStaticMarkup(<ContextSidebar />);
+    expect(markup).toContain('data-live="false"');
+    expect(markup).not.toContain("ma-motive-marquee");
+  });
 });

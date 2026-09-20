@@ -109,4 +109,15 @@ describe("Music Arcade token contract (index.css)", () => {
     expect(css).toContain("@keyframes ma-motion-coin");
     expect(css).toContain(".ma-motive-coin");
   });
+
+  it("declares the 8D theater escalation utilities", () => {
+    expect(css).toContain(".ma-motive-marquee");
+    expect(css).toContain("@keyframes ma-motion-marquee");
+    expect(css).toContain(".ma-scene-rail");
+    expect(css).toContain(".ma-scanline");
+    expect(css).toContain(".ma-facade");
+    expect(css).toContain(".ma-ambient-wash");
+    expect(css).toContain(".ma-deck-live");
+    expect(css).toContain(".ma-journey-fade");
+  });
 });

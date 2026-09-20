@@ -251,6 +251,11 @@ export function createDjEngine() {
     cancelCrossfade,
     connectElement,
     ensureContext,
+    getContext: () => ensureContext(),
+    getMaster: () => {
+      ensureContext();
+      return master;
+    },
     nextBeatDelayMs,
     resume: () => ensureContext()?.resume?.(),
     scheduleAtNextBeat,

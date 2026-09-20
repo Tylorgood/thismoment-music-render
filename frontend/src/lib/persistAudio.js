@@ -1,5 +1,6 @@
 import { createDjEngine } from "../audio/djEngine";
 import { setTheaterContext, getTheaterContext } from "@/lib/theaterContext";
+import { attachEngine } from "@/lib/reactiveBus";
 
 let engine = null;
 let live = null;
@@ -98,6 +99,7 @@ export function adopt(audio, meta = null) {
   live = audio;
   liveMeta = meta ? { ...meta } : null;
   lastAdoptedElement = audio;
+  attachEngine(getEngine());
   ensureTicker();
   publish();
 }

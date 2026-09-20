@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { Copy, Download, FolderOpen, GitBranch, Save, Sparkles } from "lucide-react";
+import { Copy, Disc3, Download, FolderOpen, GitBranch, Save, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import {
   PageHeader,
@@ -31,8 +31,22 @@ import {
 } from "@/lib/albumProjects";
 import { emptyProduction, buildProductionManifest } from "@/lib/albumProduction";
 import { setAlbumContext } from "@/lib/albumContext";
+import { pickEmotionColor } from "@/lib/ambient";
 
 const SECTIONS = ["overview", "blueprint", "tracks", "journey", "production", "export"];
+
+function albumCoverWash(journey) {
+  const climax = journey?.slots?.[journey?.climaxIndex] || journey?.slots?.[0];
+  const intensity = Number(climax?.intensity ?? journey?.peakIntensity ?? 50);
+  const t = Math.max(0, Math.min(1, (Number.isFinite(intensity) ? intensity : 50) / 100));
+  const [ar, ag, ab] = pickEmotionColor(t);
+  const [br, bg, bb] = pickEmotionColor(Math.min(1, t + 0.35));
+  return {
+    a: `rgba(${ar}, ${ag}, ${ab}, 0.5)`,
+    b: `rgba(${br}, ${bg}, ${bb}, 0.4)`,
+  };
+}
+
 
 const ROLE_CLASS = {
   opener: "bg-blue-500/20 text-blue-300 border-blue-500/40",
@@ -326,6 +340,8 @@ export default function AlbumBuilder() {
     );
   }
 
+  const coverWash = albumCoverWash(journey);
+
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">
       <PageHeader
@@ -369,6 +385,31 @@ export default function AlbumBuilder() {
       <div className="space-y-5 p-6">
         {sectionKey === "overview" && (
           <>
+            <section className="ma-facade ma-ambient-wash relative overflow-hidden bg-[var(--ma-surface-1)] p-6">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+                <div
+                  className="ma-facade-panel flex h-28 w-28 shrink-0 items-center justify-center rounded-sm border ma-hairline-strong"
+                  style={{ background: `linear-gradient(135deg, ${coverWash.a}, ${coverWash.b})` }}
+                  aria-hidden="true"
+                >
+                  <Disc3 className="h-9 w-9 text-white/70" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] ma-accent-text">Now showing</p>
+                  <h2 className="mt-1 truncate font-display text-3xl text-slate-100">
+                    {activeBlueprint?.bible?.album?.name || "Untitled album"}
+                  </h2>
+                  <p className="mt-1 text-sm ma-muted">
+                    {[inputs?.genre, inputs?.theme].filter(Boolean).join(" · ") || "No genre or theme yet"}
+                  </p>
+                  <p className="mt-2 font-mono text-[0.65rem] ma-faint">
+                    {slots.length} tracks · climax track {(blueprint?.bible?.climaxPosition?.slotIndex ?? 0) + 1} ·{" "}
+                    {blueprint?.bible?.bpmCenter ?? "—"} BPM
+                  </p>
+                </div>
+              </div>
+            </section>
+
             <div className="flex flex-wrap gap-10 border ma-hairline bg-[var(--ma-surface-1)] px-6 py-4">
               <Metric label="Tracks" value={String(slots.length)} />
               <Metric label="Matrix" value={matrix ? String(matrix.score) : "—"} tone={matrix ? matrixTone(matrix.level) : "neutral"} />

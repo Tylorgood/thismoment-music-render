@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { setTheaterContext, clearTheaterContext } from "@/lib/theaterContext";
+import { energyFromLabel, pickEmotionColor } from "@/lib/ambient";
 import {
   getEngine,
   getLive,
@@ -563,6 +564,21 @@ export default function MusicLibrary({ mode = "library" }) {
       ? smartNextTrack(activeTrack, playbackQueue, recentTrackIdsRef.current, jumpAround, learnedPlays)
       : playbackQueue[(Math.max(activeIndex, 0) + 1) % playbackQueue.length];
   }, [activeIndex, activeTrack, jumpAround, learnedPlays, playbackQueue, shuffleMix, smartMix]);
+
+  const deckGlow = useMemo(() => {
+    const bpm = Number(activeTrack?.analysis?.bpm) || 0;
+    const energyT = energyFromLabel(activeTrack?.analysis?.energy_label);
+    const [r, g, b] = pickEmotionColor(energyT == null ? 0.6 : energyT);
+    return {
+      className: isPlaying ? "ma-deck-live" : "",
+      style: isPlaying
+        ? {
+            "--ma-deck-color": `rgba(${r}, ${g}, ${b}, 0.6)`,
+            "--ma-deck-beat": bpm > 0 ? `${Math.min(2.4, Math.max(0.6, 60 / bpm)).toFixed(2)}s` : "1.6s",
+          }
+        : undefined,
+    };
+  }, [activeTrack, isPlaying]);
 
   const recentPlayLog = useMemo(() => playLog.slice(0, 5), [playLog]);
   const analyzedCount = useMemo(() => tracks.filter((track) => track.analysis).length, [tracks]);
@@ -1971,7 +1987,7 @@ export default function MusicLibrary({ mode = "library" }) {
           </div>
         </aside>
 
-        <section className="review-panel app-panel panel-now">
+        <section className={`review-panel app-panel panel-now ${deckGlow.className}`} style={deckGlow.style}>
           {activeTrack ? (
             <>
               <div className="now-playing">

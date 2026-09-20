@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Map, TrendingUp, HeartPulse } from "lucide-react";
+import { pickEmotionColor } from "@/lib/ambient";
 
 function cx(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -122,11 +123,12 @@ export default function AlbumJourney({ journey }) {
       </div>
 
       {/* intensity + pulse trajectory */}
-      <div className="mt-4 flex items-end gap-1.5">
+      <div className="ma-journey-fade mt-4 flex items-end gap-1.5 rounded-sm">
         {slots.map((slot, i) => {
           const height = Math.max(12, Math.round((slot.intensity / maxBar) * 96));
           const isClimax = i === climaxIndex;
           const isSelected = i === selected;
+          const fade = pickEmotionColor(slots.length > 1 ? i / (slots.length - 1) : 0);
           return (
             <button
               key={slot.index}
@@ -140,9 +142,12 @@ export default function AlbumJourney({ journey }) {
                   "w-full rounded-t-sm transition-colors",
                   isClimax
                     ? isSelected ? "bg-[#f1d574]" : "bg-[#d4af37]"
-                    : isSelected ? "bg-stone-300" : "bg-stone-600/60 group-hover:bg-stone-500"
+                    : isSelected ? "bg-stone-300" : "group-hover:bg-stone-500"
                 )}
-                style={{ height: `${height}px` }}
+                style={{
+                  height: `${height}px`,
+                  background: isClimax ? undefined : `rgba(${fade[0]}, ${fade[1]}, ${fade[2]}, ${isSelected ? 0.9 : 0.55})`,
+                }}
               />
               <span className={cx("rounded border px-1 py-0.5 text-[9px] font-medium", ROLE_CLASS[slot.role] || "bg-white/5 text-stone-300 border-white/10")}>
                 {i + 1}
@@ -176,6 +181,22 @@ export default function AlbumJourney({ journey }) {
                 title={`${bpm} BPM`}
               />
             ))}
+          </div>
+          <div className="mt-1 flex items-end gap-1" aria-hidden="true" data-testid="journey-beat-marks">
+            {tempo.map((bpm, i) => {
+              const count = Math.max(2, Math.min(8, Math.round(bpm / 30)));
+              return (
+                <div key={i} className="flex flex-1 items-end justify-between">
+                  {Array.from({ length: count }).map((_, beat) => (
+                    <span
+                      key={beat}
+                      className="ma-beat-mark ma-emotion-text"
+                      style={{ height: `${5 + beat * 2}px` }}
+                    />
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

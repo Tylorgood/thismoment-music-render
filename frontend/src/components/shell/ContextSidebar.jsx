@@ -1,4 +1,5 @@
 import { useTheaterContext } from "@/lib/theaterContext";
+import { energyFromLabel, pickEmotionColor } from "@/lib/ambient";
 
 function LiveRow({ track }) {
   return (
@@ -22,18 +23,43 @@ function LiveRow({ track }) {
 
 export default function ContextSidebar() {
   const theater = useTheaterContext();
+  const live = Boolean(theater?.playing);
+  const energyT = energyFromLabel(theater?.analysis?.energy_label);
+  const [railR, railG, railB] = pickEmotionColor(energyT == null ? 0.6 : energyT);
+  const railColor = `rgba(${railR}, ${railG}, ${railB}, 0.55)`;
+  const liveTitle = theater?.title || theater?.id || "Untitled";
+  const marqueeSegment = `NOW SHOWING — ${liveTitle}${theater?.bpm ? ` — ${theater.bpm} BPM` : ""} — `;
 
   return (
     <aside
-      className="hidden w-72 shrink-0 border-l ma-hairline bg-[var(--ma-surface-2)]/30 lg:flex lg:flex-col"
+      className="ma-scene-rail hidden w-72 shrink-0 border-l ma-hairline bg-[var(--ma-surface-2)]/30 lg:flex lg:flex-col"
+      data-live={live ? "true" : "false"}
+      style={{ "--ma-rail-color": railColor }}
       aria-label="Theater context"
     >
       <div className="flex items-center justify-between border-b ma-hairline px-4 py-3">
         <span className="text-[0.625rem] font-semibold uppercase tracking-[0.18em] ma-faint">Theater</span>
-        <span className="rounded-sm border ma-hairline px-1.5 py-0.5 font-mono text-[0.5625rem] ma-faint">
+        <span
+          className={`ma-scanline rounded-sm border ma-hairline px-1.5 py-0.5 font-mono text-[0.5625rem] ${
+            live ? "ma-scanline-live ma-emotion-text" : "ma-faint"
+          }`}
+        >
           ZERO
         </span>
       </div>
+
+      {live && (
+        <div
+          className="ma-motive-marquee border-b ma-hairline bg-[var(--ma-inset)]/60 py-1"
+          aria-hidden="true"
+          data-testid="theater-marquee"
+        >
+          <div className="ma-marquee-track ma-emotion-text font-mono text-[0.625rem] uppercase tracking-[0.18em]">
+            <span className="px-2">{marqueeSegment.repeat(3)}</span>
+            <span className="px-2">{marqueeSegment.repeat(3)}</span>
+          </div>
+        </div>
+      )}
 
       <div className="ma-theater-bg min-h-0 flex-1 overflow-y-auto p-4">
         {theater?.playing ? (

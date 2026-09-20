@@ -23,6 +23,7 @@ import {
   Users,
 } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "@/lib/supabaseClient";
+import FacadeBand, { InsertCoinButton } from "@/components/shell/FacadeBand";
 import {
   bootstrapWorkspace,
   approveOutboundMessage,
@@ -435,13 +436,16 @@ export default function OperatingSystem() {
     <main className="min-h-screen bg-[#090807] text-white">
       <header className="border-b border-white/10 bg-black/35">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div className="ma-facade ma-facade-panel relative overflow-hidden px-4 py-5 sm:px-6">
+            <span className="ma-facade-spotlight" aria-hidden="true" />
+            <div className="relative z-[1] flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-xs uppercase text-[#d4af37]">V2 operating system</p>
               <h1 className="mt-1 text-3xl font-semibold sm:text-5xl">This Moment Command Center</h1>
               <p className="mt-2 text-sm text-stone-400">{brand?.name || account.name} · real Supabase workspace</p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <InsertCoinButton />
               <Button variant="ghost" onClick={refresh}>
                 <RefreshCw className="h-4 w-4" />
                 Refresh
@@ -452,7 +456,17 @@ export default function OperatingSystem() {
                 Sign out
               </Button>
             </div>
+            </div>
           </div>
+          <FacadeBand
+            items={[
+              "THIS MOMENT STUDIO",
+              "INSERT COIN",
+              "LIVE SHOWS",
+              "PRIVATE EVENTS",
+              "SOUNDTRACKS FOR THE MOMENT",
+            ]}
+          />
           {error ? <p className="rounded-md border border-red-400/30 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
           {notice && !error ? <p className="rounded-md border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-200">{notice}</p> : null}
           <nav className="flex gap-2 overflow-x-auto pb-1">
